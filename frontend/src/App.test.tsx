@@ -12,9 +12,16 @@ vi.mock("./lib/api", () => ({
 }));
 
 vi.mock("./components/webllm/AppShell", () => ({
-  AppShell: ({ onLogout }: { onLogout: () => Promise<void> | void }) => (
+  AppShell: ({
+    onLogout,
+    sessionError
+  }: {
+    onLogout: () => Promise<void> | void;
+    sessionError?: string | null;
+  }) => (
     <div>
       <h1>WebLLM App Shell</h1>
+      {sessionError ? <p role="alert">{sessionError}</p> : null}
       <button type="button" onClick={() => void onLogout()}>
         Logout
       </button>
@@ -108,5 +115,25 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: "兔兔炸弹的大模型助手" })
     ).toBeInTheDocument();
+  });
+
+  it("keeps the authenticated shell active and shows an error when logout fails", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.checkSession).mockResolvedValue(true);
+    vi.mocked(api.logout).mockRejectedValue(new Error("Logout failed"));
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Logout" }));
+
+    expect(api.logout).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByRole("heading", { name: "WebLLM App Shell" })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Logout failed");
   });
 });

@@ -8,9 +8,10 @@ import { SettingsDrawer } from "./SettingsDrawer";
 
 type AppShellProps = {
   onLogout: () => Promise<void> | void;
+  sessionError?: string | null;
 };
 
-export function AppShell({ onLogout }: AppShellProps) {
+export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const {
     activeConversation,
@@ -48,6 +49,8 @@ export function AppShell({ onLogout }: AppShellProps) {
           </button>
         </div>
       </header>
+
+      {sessionError ? <p role="alert">{sessionError}</p> : null}
 
       <ConversationSidebar
         activeConversationId={activeConversationId}

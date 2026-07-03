@@ -72,9 +72,10 @@ export function App() {
 
     try {
       await logout();
-    } finally {
       setAuthenticated(false);
       navigate("/", { replace: true });
+    } catch (nextError) {
+      setError(getErrorMessage(nextError));
     }
   }
 
@@ -110,7 +111,7 @@ export function App() {
         path="/chat"
         element={
           <AuthGuard authenticated={authenticated}>
-            <AppShell onLogout={handleLogout} />
+            <AppShell onLogout={handleLogout} sessionError={error} />
           </AuthGuard>
         }
       />

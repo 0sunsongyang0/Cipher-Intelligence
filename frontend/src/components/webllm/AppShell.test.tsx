@@ -106,4 +106,10 @@ describe("AppShell", () => {
     await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Read-only runtime details")).toBeInTheDocument();
   });
+
+  it("shows a session error when logout fails", () => {
+    render(<AppShell onLogout={onLogout} sessionError="Logout failed" />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Logout failed");
+  });
 });
