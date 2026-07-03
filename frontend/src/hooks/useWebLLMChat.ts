@@ -50,7 +50,7 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function createConversation(firstMessage: string): LocalConversation {
+function createLocalConversation(firstMessage: string): LocalConversation {
   const timestamp = new Date().toISOString();
   const normalized = firstMessage.trim().replace(/\s+/g, " ");
 
@@ -226,7 +226,7 @@ export function useWebLLMChat(): UseWebLLMChatResult {
             (conversation) => conversation.id === currentState.activeConversationId
           ) ?? null;
 
-    const targetConversation = existingConversation ?? createConversation(normalizedContent);
+    const targetConversation = existingConversation ?? createLocalConversation(normalizedContent);
     const userMessage = createMessage("user", normalizedContent);
     const assistantMessage = createMessage("assistant", "");
     const conversationMessages = [...targetConversation.messages, userMessage];

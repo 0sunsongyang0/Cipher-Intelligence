@@ -1,5 +1,3 @@
-import type { Conversation, Message } from "../types";
-
 type SessionStatus = {
   authenticated: boolean;
 };
@@ -55,12 +53,3 @@ export async function logout(): Promise<void> {
     throw new Error(await readErrorMessage(response));
   }
 }
-
-// Temporary compile-only shims for the legacy chat UI until Task 3 removes it.
-export const fetchConversations: undefined | (() => Promise<Conversation[]>) = undefined;
-export const createConversation:
-  | undefined
-  | ((title: string) => Promise<Conversation>) = undefined;
-export const fetchMessages:
-  | undefined
-  | ((conversationId: number) => Promise<Message[]>) = undefined;
