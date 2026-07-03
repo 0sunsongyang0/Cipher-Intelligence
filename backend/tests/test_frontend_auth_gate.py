@@ -39,3 +39,26 @@ def test_chat_route_serves_spa_shell_for_authenticated_sessions(client) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert '<div id="root"></div>' in response.text
+
+
+def test_nested_frontend_route_redirects_to_root_without_auth(client) -> None:
+    response = client.get("/models/local-runtime", follow_redirects=False)
+
+    assert response.status_code in {302, 307}
+    assert response.headers["location"] == "/"
+
+
+def test_nested_frontend_route_serves_spa_shell_for_authenticated_sessions(client) -> None:
+    login(client)
+
+    response = client.get("/models/local-runtime")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert '<div id="root"></div>' in response.text
+
+
+def test_api_paths_are_not_swallowed_by_frontend_spa_fallback(client) -> None:
+    response = client.get("/api/not-a-real-endpoint", follow_redirects=False)
+
+    assert response.status_code == 404

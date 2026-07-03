@@ -23,9 +23,11 @@ app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(conversations_router)
 app.mount("/assets", StaticFiles(directory=FRONTEND_ASSETS_DIR), name="frontend-assets")
-app.include_router(frontend_router)
 
 
 @app.get("/api/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok", "service": "campus-llm-assistant"}
+
+
+app.include_router(frontend_router)
