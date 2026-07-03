@@ -7,6 +7,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from app.config import settings
 
 LEGACY_OWNER_SESSION_ID = 0
+OWNER_SESSION_INDEX_NAME = "ix_conversations_owner_session_id"
 
 
 def _ensure_sqlite_directory(database_url: str) -> None:
@@ -53,11 +54,13 @@ def _migrate_sqlite_conversations_owner_session_id() -> None:
             return
 
         rows = connection.exec_driver_sql("PRAGMA table_info(conversations)").fetchall()
-        if any(row[1] == "owner_session_id" for row in rows):
-            return
+        if not any(row[1] == "owner_session_id" for row in rows):
+            connection.exec_driver_sql(
+                f"ALTER TABLE conversations ADD COLUMN owner_session_id INTEGER NOT NULL DEFAULT {LEGACY_OWNER_SESSION_ID}"
+            )
 
         connection.exec_driver_sql(
-            f"ALTER TABLE conversations ADD COLUMN owner_session_id INTEGER NOT NULL DEFAULT {LEGACY_OWNER_SESSION_ID}"
+            f"CREATE INDEX IF NOT EXISTS {OWNER_SESSION_INDEX_NAME} ON conversations (owner_session_id)"
         )
 
 

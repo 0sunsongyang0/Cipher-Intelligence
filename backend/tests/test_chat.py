@@ -76,6 +76,11 @@ def test_init_db_migrates_existing_conversations_table_with_owner_session_id(
             "SELECT owner_session_id FROM conversations WHERE id = 1"
         ).fetchone()[0] == 0
 
+        indexes = {
+            row[1]: row for row in connection.execute("PRAGMA index_list(conversations)").fetchall()
+        }
+        assert "ix_conversations_owner_session_id" in indexes
+
 
 def test_parse_chunk_content_handles_deepseek_data_lines() -> None:
     assert hasattr(deepseek_module, "parse_chunk_content")
