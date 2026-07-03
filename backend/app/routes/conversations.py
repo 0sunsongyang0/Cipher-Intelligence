@@ -2,13 +2,10 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import models
-from app.database import Base, engine, get_db
+from app.database import get_db
 from app.models import Conversation
 from app.schemas import ConversationCreate, ConversationItem, ConversationList
 
-
-Base.metadata.create_all(bind=engine)
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 

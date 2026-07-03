@@ -36,6 +36,15 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
+def init_db() -> None:
+    from app.models import Conversation, Message
+
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[Conversation.__table__, Message.__table__],
+    )
+
+
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
