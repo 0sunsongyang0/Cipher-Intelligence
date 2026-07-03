@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "\u5154\u5154\u70b8\u5f39\u7684\u5927\u6a21\u578b\u52a9\u624b"
-    app_env: str = "development"
+    app_env: str = "production"
     app_access_password: str = "change-me"
     session_secret: str = "change-me-too"
     session_cookie_secure: bool | None = None

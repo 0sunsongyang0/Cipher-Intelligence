@@ -37,6 +37,22 @@ def test_login_sets_expected_cookie_attributes_for_test_env(client) -> None:
     assert "Secure" not in set_cookie
 
 
+@pytest.mark.parametrize(
+    ("app_env", "session_cookie_secure"),
+    [("production", None), ("test", True)],
+)
+def test_login_sets_secure_cookie_when_enabled(
+    client, monkeypatch, app_env: str, session_cookie_secure: bool | None
+) -> None:
+    monkeypatch.setattr(config_module.settings, "app_env", app_env)
+    monkeypatch.setattr(config_module.settings, "session_cookie_secure", session_cookie_secure)
+
+    response = login(client)
+
+    assert response.status_code == 200
+    assert "Secure" in response.headers["set-cookie"]
+
+
 
 def test_unauthenticated_conversations_request_returns_401(client) -> None:
     response = client.get("/api/conversations")
@@ -139,6 +155,18 @@ def test_production_settings_reject_default_auth_secrets() -> None:
     with pytest.raises(ValueError, match="default auth secrets"):
         config_module.Settings(
             app_env="production",
+            app_access_password="change-me",
+            session_secret="change-me-too",
+        )
+
+
+
+def test_omitted_app_env_rejects_default_auth_secrets(monkeypatch) -> None:
+    monkeypatch.delenv("APP_ENV", raising=False)
+
+    with pytest.raises(ValueError, match="default auth secrets"):
+        config_module.Settings(
+            _env_file=None,
             app_access_password="change-me",
             session_secret="change-me-too",
         )
