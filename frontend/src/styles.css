@@ -1,0 +1,180 @@
+:root {
+  color-scheme: light;
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Microsoft YaHei",
+    serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #201515;
+  background:
+    radial-gradient(circle at top, rgba(255, 236, 214, 0.92), transparent 34%),
+    linear-gradient(160deg, #fff8ef 0%, #ffe4c8 45%, #f9d3bf 100%);
+  --surface: rgba(255, 252, 247, 0.82);
+  --surface-strong: rgba(255, 248, 240, 0.94);
+  --surface-border: rgba(124, 60, 38, 0.16);
+  --accent: #c85d39;
+  --accent-deep: #8f2f1f;
+  --text-soft: #5f4440;
+  --shadow: 0 24px 60px rgba(137, 70, 47, 0.18);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  min-height: 100vh;
+  padding: 32px 20px;
+}
+
+.shell--centered {
+  display: grid;
+  place-items: center;
+}
+
+.panel {
+  width: min(100%, 500px);
+  padding: 40px 34px;
+  border: 1px solid var(--surface-border);
+  border-radius: 28px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.panel--loading,
+.chat-panel {
+  text-align: center;
+}
+
+.panel h1,
+.chat-panel h1 {
+  margin: 0 0 12px;
+  font-size: clamp(2rem, 4vw, 2.7rem);
+  line-height: 1.15;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--accent-deep);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.lead,
+.muted {
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.muted {
+  font-size: 0.98rem;
+}
+
+.login-form {
+  display: grid;
+  gap: 18px;
+  margin-top: 28px;
+}
+
+.field {
+  display: grid;
+  gap: 10px;
+}
+
+.field label {
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+
+.field input {
+  width: 100%;
+  padding: 15px 16px;
+  border: 1px solid rgba(116, 72, 54, 0.2);
+  border-radius: 16px;
+  background: var(--surface-strong);
+  color: #241615;
+  outline: none;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.field input:focus {
+  border-color: rgba(200, 93, 57, 0.65);
+  box-shadow: 0 0 0 4px rgba(200, 93, 57, 0.15);
+  transform: translateY(-1px);
+}
+
+.submit-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 15px 20px;
+  font-weight: 700;
+  color: #fffaf6;
+  background: linear-gradient(135deg, #d46c42 0%, #a53d28 100%);
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease;
+  box-shadow: 0 18px 30px rgba(165, 61, 40, 0.24);
+}
+
+.submit-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.submit-button:disabled {
+  cursor: wait;
+  opacity: 0.75;
+}
+
+.error-message {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  color: #7a1f15;
+  background: rgba(180, 58, 43, 0.1);
+}
+
+.chat-panel {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  padding: 56px 34px;
+  border: 1px solid var(--surface-border);
+  border-radius: 34px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+@media (max-width: 640px) {
+  .panel,
+  .chat-panel {
+    padding: 28px 22px;
+    border-radius: 22px;
+  }
+
+  .shell {
+    padding: 20px 14px;
+  }
+}
