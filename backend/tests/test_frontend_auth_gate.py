@@ -49,6 +49,14 @@ def test_nested_frontend_route_redirects_to_root_without_auth(client) -> None:
     assert response.headers["location"] == "/"
 
 
+def test_fastapi_docs_routes_are_not_public_without_auth(client) -> None:
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        response = client.get(path, follow_redirects=False)
+
+        assert response.status_code in {302, 307}
+        assert response.headers["location"] == "/"
+
+
 def test_nested_frontend_route_serves_spa_shell_for_authenticated_sessions(client) -> None:
     login(client)
 
