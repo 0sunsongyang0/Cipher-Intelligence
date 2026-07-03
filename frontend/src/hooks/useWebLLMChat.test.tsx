@@ -1,7 +1,11 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { saveChatState, type StoredChatState } from "../lib/storage";
+import {
+  loadChatState,
+  saveChatState,
+  type StoredChatState
+} from "../lib/storage";
 import { useWebLLMChat } from "./useWebLLMChat";
 
 const { createWebLlmEngine } = vi.hoisted(() => ({
@@ -109,5 +113,93 @@ describe("useWebLLMChat", () => {
       content: "Hello world"
     });
     expect(result.current.isGenerating).toBe(false);
+    expect(loadChatState()?.conversations[0]?.messages).toMatchObject([
+      {
+        role: "user",
+        content: "Hi"
+      },
+      {
+        role: "assistant",
+        content: "Hello world"
+      }
+    ]);
+  });
+
+  it("rejects concurrent generation runs", async () => {
+    const controls: { releaseSecondChunk: null | (() => void) } = {
+      releaseSecondChunk: null
+    };
+    const secondChunkReady = new Promise<void>((resolve) => {
+      controls.releaseSecondChunk = resolve;
+    });
+    const createCompletion = vi.fn(async () => {
+      async function* chunks() {
+        yield {
+          choices: [
+            {
+              delta: {
+                content: "Hello"
+              }
+            }
+          ]
+        };
+
+        await secondChunkReady;
+
+        yield {
+          choices: [
+            {
+              delta: {
+                content: " again"
+              }
+            }
+          ]
+        };
+      }
+
+      return chunks();
+    });
+
+    createWebLlmEngine.mockResolvedValue({
+      chat: {
+        completions: {
+          create: createCompletion
+        }
+      }
+    });
+
+    const { result } = renderHook(() => useWebLLMChat());
+
+    await act(async () => {
+      await result.current.initializeEngine();
+    });
+
+    let firstSendPromise!: Promise<void>;
+
+    await act(async () => {
+      firstSendPromise = result.current.sendMessage("Hi");
+      await Promise.resolve();
+    });
+
+    const secondSendPromise = result.current
+      .sendMessage("Another message")
+      .catch((error) => error);
+
+    await waitFor(() => {
+      expect(createCompletion).toHaveBeenCalledTimes(1);
+    });
+
+    if (controls.releaseSecondChunk !== null) {
+      controls.releaseSecondChunk();
+    }
+
+    await act(async () => {
+      await firstSendPromise;
+    });
+
+    await expect(secondSendPromise).resolves.toMatchObject({
+      message: "Chat generation is already in progress."
+    });
+    expect(result.current.activeConversation?.messages).toHaveLength(2);
   });
 });

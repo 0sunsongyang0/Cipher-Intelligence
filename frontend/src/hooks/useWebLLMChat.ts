@@ -144,6 +144,7 @@ export function useWebLLMChat(): UseWebLLMChatResult {
 
   const engineRef = useRef<MLCEngineInterface | null>(null);
   const chatStateRef = useRef(chatState);
+  const generationInFlightRef = useRef(false);
 
   useEffect(() => {
     chatStateRef.current = chatState;
@@ -194,6 +195,11 @@ export function useWebLLMChat(): UseWebLLMChatResult {
       throw new Error("WebLLM engine is not initialized.");
     }
 
+    if (generationInFlightRef.current) {
+      throw new Error("Chat generation is already in progress.");
+    }
+
+    generationInFlightRef.current = true;
     setError(null);
     setIsGenerating(true);
 
@@ -266,6 +272,7 @@ export function useWebLLMChat(): UseWebLLMChatResult {
       setError(nextError instanceof Error ? nextError.message : "Failed to generate response.");
       throw nextError;
     } finally {
+      generationInFlightRef.current = false;
       setIsGenerating(false);
     }
   }
