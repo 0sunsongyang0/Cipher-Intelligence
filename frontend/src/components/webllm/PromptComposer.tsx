@@ -34,21 +34,27 @@ export function PromptComposer({
   }
 
   return (
-    <form aria-label="Prompt composer" onSubmit={handleSubmit}>
-      <label htmlFor="prompt-composer-message">Message</label>
+    <form className="prompt-composer" aria-label="Prompt composer" onSubmit={handleSubmit}>
+      <label className="prompt-composer__label" htmlFor="prompt-composer-message">
+        Message
+      </label>
       <textarea
+        className="prompt-composer__input"
         id="prompt-composer-message"
         name="message"
         rows={4}
         value={content}
         onChange={(event) => setContent(event.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Ask WebLLM something…"
+        placeholder="Ask WebLLM something..."
         disabled={disabled}
       />
-      <button type="submit" disabled={isSubmitDisabled}>
-        {isGenerating ? "Sending…" : "Send"}
-      </button>
+      <div className="prompt-composer__footer">
+        <p className="prompt-composer__hint">Press Enter to send, Shift+Enter for a new line.</p>
+        <button className="primary-button" type="submit" disabled={isSubmitDisabled}>
+          {isGenerating ? "Sending..." : "Send"}
+        </button>
+      </div>
     </form>
   );
 }

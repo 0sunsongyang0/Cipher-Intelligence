@@ -10,12 +10,10 @@ describe("LoginPage", () => {
 
     render(<LoginPage onSubmit={onSubmit} isSubmitting={false} error={null} />);
 
-    expect(
-      screen.getByRole("heading", { name: "兔兔炸弹的大模型助手" })
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Enter the local workspace" })).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText("访问口令"), "campus-secret");
-    await user.click(screen.getByRole("button", { name: "进入助手" }));
+    await user.type(screen.getByLabelText("Access passphrase"), "campus-secret");
+    await user.click(screen.getByRole("button", { name: "Open chat" }));
 
     expect(onSubmit).toHaveBeenCalledWith("campus-secret");
   });
@@ -26,11 +24,11 @@ describe("LoginPage", () => {
 
     render(<LoginPage onSubmit={onSubmit} isSubmitting={false} error={null} />);
 
-    const button = screen.getByRole("button", { name: "进入助手" });
+    const button = screen.getByRole("button", { name: "Open chat" });
 
     expect(button).toBeDisabled();
 
-    await user.type(screen.getByLabelText("访问口令"), "   ");
+    await user.type(screen.getByLabelText("Access passphrase"), "   ");
 
     expect(button).toBeDisabled();
     expect(onSubmit).not.toHaveBeenCalled();
@@ -42,8 +40,8 @@ describe("LoginPage", () => {
 
     render(<LoginPage onSubmit={onSubmit} isSubmitting={false} error={null} />);
 
-    await user.type(screen.getByLabelText("访问口令"), "  campus-secret  ");
-    await user.click(screen.getByRole("button", { name: "进入助手" }));
+    await user.type(screen.getByLabelText("Access passphrase"), "  campus-secret  ");
+    await user.click(screen.getByRole("button", { name: "Open chat" }));
 
     expect(onSubmit).toHaveBeenCalledWith("  campus-secret  ");
   });

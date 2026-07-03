@@ -61,6 +61,7 @@ describe("AppShell", () => {
   it("renders the webllm shell sections and initializes the runtime on mount", async () => {
     render(<AppShell onLogout={onLogout} />);
 
+    expect(screen.getByRole("heading", { name: "Local model chat" })).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Conversations" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Runtime" })).toBeInTheDocument();
     expect(screen.getByRole("log", { name: "Messages" })).toBeInTheDocument();
@@ -111,5 +112,58 @@ describe("AppShell", () => {
     render(<AppShell onLogout={onLogout} sessionError="Logout failed" />);
 
     expect(screen.getByRole("alert")).toHaveTextContent("Logout failed");
+  });
+
+  it("shows clear loading state copy while the runtime is preparing", () => {
+    vi.mocked(useWebLLMChatModule.useWebLLMChat).mockReturnValue({
+      activeConversation: null,
+      activeConversationId: null,
+      conversations: [],
+      error: null,
+      initializeEngine,
+      initProgress: {
+        progress: 0.42,
+        text: "Loading model weights"
+      },
+      isGenerating: false,
+      runtimeStatus: "loading",
+      sendMessage,
+      setActiveConversationId,
+      settings: {
+        modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    expect(screen.getByText("Preparing local runtime")).toBeInTheDocument();
+    expect(screen.getByText("Loading model weights (42%)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Runtime starting" })).toBeDisabled();
+  });
+
+  it("shows clear recovery actions when the runtime fails", () => {
+    vi.mocked(useWebLLMChatModule.useWebLLMChat).mockReturnValue({
+      activeConversation: null,
+      activeConversationId: null,
+      conversations: [],
+      error: "GPU adapter unavailable",
+      initializeEngine,
+      initProgress: null,
+      isGenerating: false,
+      runtimeStatus: "error",
+      sendMessage,
+      setActiveConversationId,
+      settings: {
+        modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    expect(screen.getByText("Runtime needs attention")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("GPU adapter unavailable");
+    expect(screen.getByRole("button", { name: "Retry runtime" })).toBeEnabled();
   });
 });

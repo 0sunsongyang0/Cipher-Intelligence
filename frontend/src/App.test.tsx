@@ -50,14 +50,12 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    expect(
-      screen.getByRole("heading", { name: "正在恢复访问会话" })
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "正在恢复访问会话" })).toBeInTheDocument();
 
     resolveSession?.(false);
 
     expect(
-      await screen.findByRole("heading", { name: "兔兔炸弹的大模型助手" })
+      await screen.findByRole("heading", { name: "Enter the local workspace" })
     ).toBeInTheDocument();
   });
 
@@ -75,13 +73,11 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    await user.type(await screen.findByLabelText("访问口令"), "campus-secret");
-    await user.click(screen.getByRole("button", { name: "进入助手" }));
+    await user.type(await screen.findByLabelText("Access passphrase"), "campus-secret");
+    await user.click(screen.getByRole("button", { name: "Open chat" }));
 
     expect(login).toHaveBeenCalledWith("campus-secret");
-    expect(
-      await screen.findByRole("heading", { name: "WebLLM App Shell" })
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "WebLLM App Shell" })).toBeInTheDocument();
   });
 
   it("renders the webllm shell for authenticated chat visits", async () => {
@@ -93,9 +89,7 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    expect(
-      await screen.findByRole("heading", { name: "WebLLM App Shell" })
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "WebLLM App Shell" })).toBeInTheDocument();
   });
 
   it("logs out from the authenticated shell and returns to login", async () => {
@@ -113,7 +107,7 @@ describe("App", () => {
 
     expect(api.logout).toHaveBeenCalledTimes(1);
     expect(
-      await screen.findByRole("heading", { name: "兔兔炸弹的大模型助手" })
+      await screen.findByRole("heading", { name: "Enter the local workspace" })
     ).toBeInTheDocument();
   });
 
@@ -131,9 +125,7 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: "Logout" }));
 
     expect(api.logout).toHaveBeenCalledTimes(1);
-    expect(
-      await screen.findByRole("heading", { name: "WebLLM App Shell" })
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "WebLLM App Shell" })).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Logout failed");
   });
 });

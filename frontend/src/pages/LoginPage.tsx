@@ -25,15 +25,25 @@ export function LoginPage({
   }
 
   return (
-    <main className="shell shell--centered">
-      <section className="panel">
-        <p className="eyebrow">Campus LLM Assistant</p>
-        <h1>兔兔炸弹的大模型助手</h1>
-        <p className="lead">输入统一访问口令后即可进入校园专用对话入口。</p>
+    <main className="auth-shell">
+      <section className="auth-panel">
+        <div className="auth-panel__intro">
+          <p className="eyebrow">WebLLM-ready access</p>
+          <h1>Enter the local workspace</h1>
+          <p className="lead">
+            Sign in with the shared passphrase to open the browser-based local model chat.
+          </p>
+        </div>
+
+        <div className="auth-panel__meta" aria-hidden="true">
+          <span>Private session</span>
+          <span>Local runtime</span>
+          <span>Browser-native UI</span>
+        </div>
 
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="field">
-            <label htmlFor="password">访问口令</label>
+            <label htmlFor="password">Access passphrase</label>
             <input
               id="password"
               name="password"
@@ -41,18 +51,19 @@ export function LoginPage({
               autoComplete="current-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              placeholder="Enter passphrase"
               disabled={isSubmitting}
             />
           </div>
 
           {error ? (
-            <p className="error-message" role="alert">
+            <p className="status-banner status-banner--error" role="alert">
               {error}
             </p>
           ) : null}
 
-          <button className="submit-button" type="submit" disabled={isSubmitDisabled}>
-            {isSubmitting ? "正在进入..." : "进入助手"}
+          <button className="primary-button" type="submit" disabled={isSubmitDisabled}>
+            {isSubmitting ? "Opening chat..." : "Open chat"}
           </button>
         </form>
       </section>

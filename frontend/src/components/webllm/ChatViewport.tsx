@@ -14,34 +14,50 @@ export function ChatViewport({
   const messages = activeConversation?.messages ?? [];
 
   return (
-    <section aria-label="Messages" role="log" aria-live="polite">
-      <header>
-        <h2>{activeConversation?.title ?? "New conversation"}</h2>
-        <p>
+    <section className="chat-viewport" aria-label="Messages" role="log" aria-live="polite">
+      <header className="chat-viewport__header">
+        <div>
+          <p className="eyebrow">Conversation</p>
+          <h2>{activeConversation?.title ?? "New conversation"}</h2>
+        </div>
+        <p className="chat-viewport__meta">
           {messages.length === 0
             ? "Send a prompt to begin this local conversation."
             : `${messages.length} messages in this conversation.`}
         </p>
       </header>
 
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? (
+        <p className="status-banner status-banner--error" role="alert">
+          {error}
+        </p>
+      ) : null}
 
       {messages.length === 0 ? (
-        <p>No messages yet.</p>
+        <div className="empty-state">
+          <p className="eyebrow">Ready when you are</p>
+          <h3>No messages yet</h3>
+          <p>Ask for a summary, brainstorm, or draft to start a browser-local exchange.</p>
+        </div>
       ) : (
-        <ol>
+        <ol className="message-thread">
           {messages.map((message) => (
-            <li key={message.id}>
-              <article>
-                <p>{message.role === "user" ? "You" : message.role === "assistant" ? "Assistant" : "System"}</p>
-                <p>{message.content || "…"}</p>
+            <li
+              key={message.id}
+              className={`message-item message-item--${message.role === "assistant" ? "assistant" : message.role}`}
+            >
+              <article className="message-card">
+                <p className="message-card__role">
+                  {message.role === "user" ? "You" : message.role === "assistant" ? "Assistant" : "System"}
+                </p>
+                <p className="message-card__content">{message.content || "…"}</p>
               </article>
             </li>
           ))}
         </ol>
       )}
 
-      {isGenerating ? <p>Generating response…</p> : null}
+      {isGenerating ? <p className="streaming-indicator">Generating response...</p> : null}
     </section>
   );
 }
