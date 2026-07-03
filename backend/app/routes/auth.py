@@ -10,6 +10,7 @@ from app.auth import (
     get_session_record,
     verify_password,
 )
+from app.config import settings
 from app.database import get_db
 from app.rate_limit import clear_failed_attempts, is_rate_limited, record_failed_attempt
 from app.schemas import AuthSuccess, LoginRequest, SessionStatus
@@ -46,6 +47,7 @@ def login(
         httponly=True,
         max_age=int(SESSION_TTL.total_seconds()),
         samesite="lax",
+        secure=settings.session_cookie_secure_enabled,
     )
     return AuthSuccess(authenticated=True)
 
@@ -53,7 +55,12 @@ def login(
 @router.post("/logout", response_model=SessionStatus)
 def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> SessionStatus:
     delete_session(db, request.cookies.get(COOKIE_NAME))
-    response.delete_cookie(key=COOKIE_NAME, httponly=True, samesite="lax")
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        httponly=True,
+        samesite="lax",
+        secure=settings.session_cookie_secure_enabled,
+    )
     return SessionStatus(authenticated=False)
 
 

@@ -1,9 +1,5 @@
 def login(client) -> None:
-    response = client.post(
-        "/api/auth/login",
-        json={"password": "change-me"},
-        headers={"X-Forwarded-For": "test-conversations"},
-    )
+    response = client.post("/api/auth/login", json={"password": "change-me"})
     assert response.status_code == 200
 
 

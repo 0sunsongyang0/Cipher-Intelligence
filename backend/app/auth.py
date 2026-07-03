@@ -24,9 +24,6 @@ def verify_password(password: str) -> bool:
 
 
 def get_client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",", maxsplit=1)[0].strip()
     return request.client.host if request.client is not None else ""
 
 

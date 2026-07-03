@@ -4,14 +4,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config import settings
-from app.database import Base, engine
+from app.database import init_db
 from app.routes.auth import router as auth_router
 from app.routes.conversations import router as conversations_router
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    Base.metadata.create_all(bind=engine)
+    init_db()
     yield
 
 
