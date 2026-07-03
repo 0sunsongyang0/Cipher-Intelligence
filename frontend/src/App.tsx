@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthGuard } from "./components/AuthGuard";
+import { AppShell } from "./components/webllm/AppShell";
 import { checkSession, login } from "./lib/api";
-import { ChatPage } from "./pages/ChatPage";
 import { LoginPage } from "./pages/LoginPage";
 
 function getErrorMessage(error: unknown): string {
@@ -99,7 +99,7 @@ export function App() {
         path="/chat"
         element={
           <AuthGuard authenticated={authenticated}>
-            <ChatPage />
+            <AppShell />
           </AuthGuard>
         }
       />

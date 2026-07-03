@@ -10,6 +10,10 @@ vi.mock("./lib/api", () => ({
   login: vi.fn()
 }));
 
+vi.mock("./components/webllm/AppShell", () => ({
+  AppShell: () => <h1>WebLLM App Shell</h1>
+}));
+
 describe("App", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -61,7 +65,21 @@ describe("App", () => {
 
     expect(login).toHaveBeenCalledWith("campus-secret");
     expect(
-      await screen.findByRole("heading", { name: "对话界面正在准备中" })
+      await screen.findByRole("heading", { name: "WebLLM App Shell" })
+    ).toBeInTheDocument();
+  });
+
+  it("renders the webllm shell for authenticated chat visits", async () => {
+    vi.mocked(api.checkSession).mockResolvedValue(true);
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "WebLLM App Shell" })
     ).toBeInTheDocument();
   });
 });
