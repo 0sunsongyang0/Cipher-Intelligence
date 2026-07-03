@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearChatState,
   loadChatState,
@@ -104,5 +104,34 @@ describe("storage helpers", () => {
     );
 
     expect(loadChatState(fallback)).toEqual(fallback);
+  });
+
+  it("returns the fallback when localStorage reads are unavailable", () => {
+    const fallback: StoredChatState = {
+      activeConversationId: null,
+      conversations: [],
+      settings: {
+        modelId: "fallback-model",
+        systemPrompt: ""
+      }
+    };
+
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+
+    expect(loadChatState(fallback)).toEqual(fallback);
+  });
+
+  it("ignores localStorage write and clear failures", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+
+    expect(() => saveChatState(savedState)).not.toThrow();
+    expect(() => clearChatState()).not.toThrow();
   });
 });

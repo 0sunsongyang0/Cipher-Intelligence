@@ -188,7 +188,6 @@ export function useWebLLMChat(): UseWebLLMChatResult {
       } catch (nextError) {
         setRuntimeStatus("error");
         setError(nextError instanceof Error ? nextError.message : "Failed to initialize WebLLM.");
-        throw nextError;
       } finally {
         initInFlightRef.current = null;
       }
@@ -285,7 +284,6 @@ export function useWebLLMChat(): UseWebLLMChatResult {
       }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to generate response.");
-      throw nextError;
     } finally {
       generationInFlightRef.current = false;
       setIsGenerating(false);

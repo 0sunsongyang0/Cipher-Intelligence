@@ -4,6 +4,14 @@ const CHAT_STATE_STORAGE_KEY = "webllm-chat-state";
 
 export type { StoredChatState } from "../types";
 
+function removeStoredChatState(): void {
+  try {
+    localStorage.removeItem(CHAT_STATE_STORAGE_KEY);
+  } catch {
+    // Storage may be unavailable in private browsing or restricted contexts.
+  }
+}
+
 function isValidChatState(value: unknown): value is StoredChatState {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -61,7 +69,13 @@ function isValidChatState(value: unknown): value is StoredChatState {
 }
 
 export function loadChatState(fallback?: StoredChatState): StoredChatState | null {
-  const rawValue = localStorage.getItem(CHAT_STATE_STORAGE_KEY);
+  let rawValue: string | null;
+
+  try {
+    rawValue = localStorage.getItem(CHAT_STATE_STORAGE_KEY);
+  } catch {
+    return fallback ?? null;
+  }
 
   if (rawValue === null) {
     return fallback ?? null;
@@ -71,21 +85,25 @@ export function loadChatState(fallback?: StoredChatState): StoredChatState | nul
     const parsedValue = JSON.parse(rawValue) as unknown;
 
     if (!isValidChatState(parsedValue)) {
-      localStorage.removeItem(CHAT_STATE_STORAGE_KEY);
+      removeStoredChatState();
       return fallback ?? null;
     }
 
     return parsedValue;
   } catch {
-    localStorage.removeItem(CHAT_STATE_STORAGE_KEY);
+    removeStoredChatState();
     return fallback ?? null;
   }
 }
 
 export function saveChatState(state: StoredChatState): void {
-  localStorage.setItem(CHAT_STATE_STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(CHAT_STATE_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Keep the in-memory chat usable even when persistence is unavailable.
+  }
 }
 
 export function clearChatState(): void {
-  localStorage.removeItem(CHAT_STATE_STORAGE_KEY);
+  removeStoredChatState();
 }

@@ -16,6 +16,9 @@ FRONTEND_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
 
 
 def serve_spa_shell() -> FileResponse:
+    if not FRONTEND_INDEX_PATH.is_file():
+        raise HTTPException(status_code=503, detail="Frontend build is not available.")
+
     return FileResponse(FRONTEND_INDEX_PATH)
 
 

@@ -97,6 +97,19 @@ describe("useWebLLMChat", () => {
     expect(result.current.runtimeStatus).toBe("ready");
   });
 
+  it("records initialization failures without rejecting the UI event", async () => {
+    createWebLlmEngine.mockRejectedValue(new Error("WebGPU unavailable"));
+
+    const { result } = renderHook(() => useWebLLMChat());
+
+    await act(async () => {
+      await expect(result.current.initializeEngine()).resolves.toBeUndefined();
+    });
+
+    expect(result.current.runtimeStatus).toBe("error");
+    expect(result.current.error).toBe("WebGPU unavailable");
+  });
+
   it("streams assistant content into the active conversation", async () => {
     createWebLlmEngine.mockResolvedValue({
       chat: {
@@ -239,5 +252,37 @@ describe("useWebLLMChat", () => {
       message: "Chat generation is already in progress."
     });
     expect(result.current.activeConversation?.messages).toHaveLength(2);
+  });
+
+  it("records generation failures without rejecting the UI event", async () => {
+    createWebLlmEngine.mockResolvedValue({
+      chat: {
+        completions: {
+          create: vi.fn(async () => {
+            throw new Error("model download failed");
+          })
+        }
+      }
+    });
+
+    const { result } = renderHook(() => useWebLLMChat());
+
+    await act(async () => {
+      await result.current.initializeEngine();
+      await expect(result.current.sendMessage("Hi")).resolves.toBeUndefined();
+    });
+
+    expect(result.current.error).toBe("model download failed");
+    expect(result.current.isGenerating).toBe(false);
+    expect(result.current.activeConversation?.messages).toMatchObject([
+      {
+        role: "user",
+        content: "Hi"
+      },
+      {
+        role: "assistant",
+        content: ""
+      }
+    ]);
   });
 });
