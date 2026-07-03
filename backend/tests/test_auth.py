@@ -79,6 +79,20 @@ def test_session_status_reflects_login_and_logout(client) -> None:
     assert session_response.json() == {"authenticated": False}
 
 
+def test_logout_revokes_access_to_authenticated_frontend_routes(client) -> None:
+    login_response = login(client)
+    assert login_response.status_code == 200
+    assert client.get("/chat").status_code == 200
+
+    logout_response = client.post("/api/auth/logout")
+
+    assert logout_response.status_code == 200
+
+    response = client.get("/chat", follow_redirects=False)
+    assert response.status_code in {302, 307}
+    assert response.headers["location"] == "/"
+
+
 
 def test_logout_removes_server_side_session(client) -> None:
     login_response = login(client)
