@@ -23,6 +23,7 @@ export function SettingsDrawer({
           Close settings
         </button>
       </div>
+      <p>Read-only runtime details</p>
       <dl>
         <dt>Model</dt>
         <dd>{settings.modelId}</dd>

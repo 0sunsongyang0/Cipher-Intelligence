@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthGuard } from "./components/AuthGuard";
 import { AppShell } from "./components/webllm/AppShell";
-import { checkSession, login } from "./lib/api";
+import { checkSession, login, logout } from "./lib/api";
 import { LoginPage } from "./pages/LoginPage";
 
 function getErrorMessage(error: unknown): string {
@@ -67,6 +67,17 @@ export function App() {
     }
   }
 
+  async function handleLogout() {
+    setError(null);
+
+    try {
+      await logout();
+    } finally {
+      setAuthenticated(false);
+      navigate("/", { replace: true });
+    }
+  }
+
   if (!sessionKnown) {
     return (
       <main className="shell shell--centered">
@@ -99,7 +110,7 @@ export function App() {
         path="/chat"
         element={
           <AuthGuard authenticated={authenticated}>
-            <AppShell />
+            <AppShell onLogout={handleLogout} />
           </AuthGuard>
         }
       />

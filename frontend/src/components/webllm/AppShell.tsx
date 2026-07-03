@@ -6,7 +6,11 @@ import { PromptComposer } from "./PromptComposer";
 import { RuntimePanel } from "./RuntimePanel";
 import { SettingsDrawer } from "./SettingsDrawer";
 
-export function AppShell() {
+type AppShellProps = {
+  onLogout: () => Promise<void> | void;
+};
+
+export function AppShell({ onLogout }: AppShellProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const {
     activeConversation,
@@ -35,9 +39,14 @@ export function AppShell() {
           <p>WebLLM chat</p>
           <h1>WebLLM App Shell</h1>
         </div>
-        <button type="button" onClick={() => setSettingsOpen(true)}>
-          Settings
-        </button>
+        <div>
+          <button type="button" onClick={() => setSettingsOpen(true)}>
+            Settings
+          </button>
+          <button type="button" onClick={() => void onLogout()}>
+            Logout
+          </button>
+        </div>
       </header>
 
       <ConversationSidebar

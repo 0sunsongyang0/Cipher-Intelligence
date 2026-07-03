@@ -34,6 +34,7 @@ function buildConversation(): LocalConversation {
 
 describe("AppShell", () => {
   const initializeEngine = vi.fn().mockResolvedValue(undefined);
+  const onLogout = vi.fn().mockResolvedValue(undefined);
   const sendMessage = vi.fn().mockResolvedValue(undefined);
   const setActiveConversationId = vi.fn();
 
@@ -58,7 +59,7 @@ describe("AppShell", () => {
   });
 
   it("renders the webllm shell sections and initializes the runtime on mount", async () => {
-    render(<AppShell />);
+    render(<AppShell onLogout={onLogout} />);
 
     expect(screen.getByRole("complementary", { name: "Conversations" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Runtime" })).toBeInTheDocument();
@@ -74,7 +75,7 @@ describe("AppShell", () => {
   it("switches conversations from the sidebar", async () => {
     const user = userEvent.setup();
 
-    render(<AppShell />);
+    render(<AppShell onLogout={onLogout} />);
 
     await user.click(screen.getByRole("button", { name: /Runtime setup/i }));
 
@@ -84,7 +85,7 @@ describe("AppShell", () => {
   it("submits a prompt through the composer", async () => {
     const user = userEvent.setup();
 
-    render(<AppShell />);
+    render(<AppShell onLogout={onLogout} />);
 
     await user.type(screen.getByLabelText("Message"), "Explain WebLLM");
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -92,5 +93,17 @@ describe("AppShell", () => {
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith("Explain WebLLM");
     });
+  });
+
+  it("exposes a logout action and labels settings as read-only", async () => {
+    const user = userEvent.setup();
+
+    render(<AppShell onLogout={onLogout} />);
+
+    await user.click(screen.getByRole("button", { name: "Logout" }));
+    expect(onLogout).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByText("Read-only runtime details")).toBeInTheDocument();
   });
 });

@@ -59,6 +59,44 @@ describe("useWebLLMChat", () => {
     );
   });
 
+  it("deduplicates concurrent runtime initialization", async () => {
+    let resolveEngine: ((engine: unknown) => void) | undefined;
+
+    createWebLlmEngine.mockReturnValue(
+      new Promise((resolve) => {
+        resolveEngine = resolve;
+      })
+    );
+
+    const { result } = renderHook(() => useWebLLMChat());
+
+    let firstInitPromise!: Promise<void>;
+    let secondInitPromise!: Promise<void>;
+
+    await act(async () => {
+      firstInitPromise = result.current.initializeEngine();
+      secondInitPromise = result.current.initializeEngine();
+      await Promise.resolve();
+    });
+
+    expect(createWebLlmEngine).toHaveBeenCalledTimes(1);
+    expect(result.current.runtimeStatus).toBe("loading");
+
+    resolveEngine?.({
+      chat: {
+        completions: {
+          create: vi.fn()
+        }
+      }
+    });
+
+    await act(async () => {
+      await Promise.all([firstInitPromise, secondInitPromise]);
+    });
+
+    expect(result.current.runtimeStatus).toBe("ready");
+  });
+
   it("streams assistant content into the active conversation", async () => {
     createWebLlmEngine.mockResolvedValue({
       chat: {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChatCompletionChunk,
   ChatCompletionMessageParam,
@@ -143,6 +143,7 @@ export function useWebLLMChat(): UseWebLLMChatResult {
   const [error, setError] = useState<string | null>(null);
 
   const engineRef = useRef<MLCEngineInterface | null>(null);
+  const initInFlightRef = useRef<Promise<void> | null>(null);
   const chatStateRef = useRef(chatState);
   const generationInFlightRef = useRef(false);
 
@@ -161,27 +162,41 @@ export function useWebLLMChat(): UseWebLLMChatResult {
     [chatState.activeConversationId, chatState.conversations]
   );
 
-  async function initializeEngine() {
+  const initializeEngine = useCallback(async () => {
     if (engineRef.current !== null) {
       return;
+    }
+
+    if (initInFlightRef.current !== null) {
+      return initInFlightRef.current;
     }
 
     setError(null);
     setRuntimeStatus("loading");
 
-    try {
-      const engine = await createWebLlmEngine(chatStateRef.current.settings.modelId, (progress) => {
-        setInitProgress(progress);
-      });
+    const initPromise = (async () => {
+      try {
+        const engine = await createWebLlmEngine(
+          chatStateRef.current.settings.modelId,
+          (progress) => {
+            setInitProgress(progress);
+          }
+        );
 
-      engineRef.current = engine as MLCEngineInterface;
-      setRuntimeStatus("ready");
-    } catch (nextError) {
-      setRuntimeStatus("error");
-      setError(nextError instanceof Error ? nextError.message : "Failed to initialize WebLLM.");
-      throw nextError;
-    }
-  }
+        engineRef.current = engine as MLCEngineInterface;
+        setRuntimeStatus("ready");
+      } catch (nextError) {
+        setRuntimeStatus("error");
+        setError(nextError instanceof Error ? nextError.message : "Failed to initialize WebLLM.");
+        throw nextError;
+      } finally {
+        initInFlightRef.current = null;
+      }
+    })();
+
+    initInFlightRef.current = initPromise;
+    return initPromise;
+  }, []);
 
   async function sendMessage(content: string) {
     const normalizedContent = content.trim();

@@ -7,11 +7,19 @@ import * as api from "./lib/api";
 
 vi.mock("./lib/api", () => ({
   checkSession: vi.fn(),
-  login: vi.fn()
+  login: vi.fn(),
+  logout: vi.fn()
 }));
 
 vi.mock("./components/webllm/AppShell", () => ({
-  AppShell: () => <h1>WebLLM App Shell</h1>
+  AppShell: ({ onLogout }: { onLogout: () => Promise<void> | void }) => (
+    <div>
+      <h1>WebLLM App Shell</h1>
+      <button type="button" onClick={() => void onLogout()}>
+        Logout
+      </button>
+    </div>
+  )
 }));
 
 describe("App", () => {
@@ -80,6 +88,25 @@ describe("App", () => {
 
     expect(
       await screen.findByRole("heading", { name: "WebLLM App Shell" })
+    ).toBeInTheDocument();
+  });
+
+  it("logs out from the authenticated shell and returns to login", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.checkSession).mockResolvedValue(true);
+    vi.mocked(api.logout).mockResolvedValue(undefined);
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Logout" }));
+
+    expect(api.logout).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByRole("heading", { name: "兔兔炸弹的大模型助手" })
     ).toBeInTheDocument();
   });
 });
