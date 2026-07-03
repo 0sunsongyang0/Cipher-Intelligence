@@ -71,6 +71,12 @@ def test_exact_api_path_is_not_swallowed_by_frontend_spa_fallback(client) -> Non
     assert response.status_code == 404
 
 
+def test_known_api_path_with_wrong_method_preserves_fastapi_405(client) -> None:
+    response = client.get("/api/auth/login", follow_redirects=False)
+
+    assert response.status_code == 405
+
+
 def test_non_get_api_paths_are_not_swallowed_by_frontend_spa_fallback(client) -> None:
     response = client.post("/api/not-a-real-endpoint", follow_redirects=False)
 

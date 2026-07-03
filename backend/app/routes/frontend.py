@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
+from starlette.routing import Match
 from sqlalchemy.orm import Session
 
 from app.auth import COOKIE_NAME, get_session_record
@@ -22,6 +23,29 @@ def api_not_found() -> None:
     raise HTTPException(status_code=404, detail="Not Found")
 
 
+def preserve_api_status_for_request(request: Request) -> None:
+    allowed_methods: set[str] = set()
+
+    for route in request.app.router.routes:
+        route_path = getattr(route, "path", "")
+        if not route_path.startswith("/api") or route_path in {"/api", "/api/{api_path:path}"}:
+            continue
+
+        match, _ = route.matches(request.scope)
+        if match == Match.PARTIAL:
+            allowed_methods.update(route.methods or set())
+
+    if allowed_methods:
+        allow_header = ", ".join(sorted(method for method in allowed_methods if method != "HEAD"))
+        raise HTTPException(
+            status_code=405,
+            detail="Method Not Allowed",
+            headers={"Allow": allow_header} if allow_header else None,
+        )
+
+    api_not_found()
+
+
 @router.get("/", response_model=None)
 def serve_root() -> Response:
     return serve_spa_shell()
@@ -39,17 +63,17 @@ def serve_authenticated_chat_entry(
 
 
 @router.api_route("/api", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
-def preserve_exact_api_path() -> None:
-    api_not_found()
+def preserve_exact_api_path(request: Request) -> None:
+    preserve_api_status_for_request(request)
 
 
 @router.api_route(
     "/api/{api_path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
 )
-def preserve_api_paths(api_path: str) -> None:
+def preserve_api_paths(api_path: str, request: Request) -> None:
     del api_path
-    api_not_found()
+    preserve_api_status_for_request(request)
 
 
 @router.get("/{frontend_path:path}", response_model=None)
