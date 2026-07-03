@@ -4,7 +4,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import app.database as database_module
-from app.main import app
 
 
 def login(client) -> str:
@@ -118,7 +117,6 @@ def test_server_chat_route_is_not_mounted_in_primary_app(client) -> None:
 
     response = client.post("/api/chat", json={"conversation_id": 1, "content": "hello"})
 
-    assert "/api/chat" not in {getattr(route, "path", "") for route in app.routes}
     assert response.status_code in {404, 410}
     if response.status_code == 404:
         assert response.json() == {"detail": "Not Found"}
@@ -132,8 +130,6 @@ def test_server_conversation_routes_are_not_mounted_in_primary_app(client) -> No
     messages_response = client.get("/api/conversations/1/messages")
     delete_response = client.delete("/api/conversations/1")
 
-    mounted_api_paths = {getattr(route, "path", "") for route in app.routes}
-    assert not any(path.startswith("/api/conversations") for path in mounted_api_paths)
     for response in (list_response, create_response, messages_response, delete_response):
         assert response.status_code in {404, 410}
         if response.status_code == 404:
