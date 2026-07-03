@@ -11,7 +11,12 @@ export function loadChatState(fallback?: StoredChatState): StoredChatState | nul
     return fallback ?? null;
   }
 
-  return JSON.parse(rawValue) as StoredChatState;
+  try {
+    return JSON.parse(rawValue) as StoredChatState;
+  } catch {
+    localStorage.removeItem(CHAT_STATE_STORAGE_KEY);
+    return fallback ?? null;
+  }
 }
 
 export function saveChatState(state: StoredChatState): void {

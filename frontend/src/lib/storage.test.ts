@@ -68,4 +68,19 @@ describe("storage helpers", () => {
 
     expect(loadChatState()).toBeNull();
   });
+
+  it("returns the fallback when persisted state is corrupted", () => {
+    const fallback: StoredChatState = {
+      activeConversationId: null,
+      conversations: [],
+      settings: {
+        modelId: "fallback-model",
+        systemPrompt: ""
+      }
+    };
+
+    localStorage.setItem("webllm-chat-state", "{oops");
+
+    expect(loadChatState(fallback)).toEqual(fallback);
+  });
 });
