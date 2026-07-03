@@ -12,16 +12,16 @@ export function LoginPage({
   onSubmit
 }: LoginPageProps) {
   const [password, setPassword] = useState("");
-  const trimmedPassword = password.trim();
-  const isSubmitDisabled = isSubmitting || trimmedPassword.length === 0;
+  const isBlankPassword = password.trim().length === 0;
+  const isSubmitDisabled = isSubmitting || isBlankPassword;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (trimmedPassword.length === 0) {
+    if (isBlankPassword) {
       return;
     }
 
-    await onSubmit(trimmedPassword);
+    await onSubmit(password);
   }
 
   return (

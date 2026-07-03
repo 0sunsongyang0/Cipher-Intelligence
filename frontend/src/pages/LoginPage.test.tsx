@@ -35,4 +35,16 @@ describe("LoginPage", () => {
     expect(button).toBeDisabled();
     expect(onSubmit).not.toHaveBeenCalled();
   });
+
+  it("submits surrounding whitespace exactly as entered", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    render(<LoginPage onSubmit={onSubmit} isSubmitting={false} error={null} />);
+
+    await user.type(screen.getByLabelText("访问口令"), "  campus-secret  ");
+    await user.click(screen.getByRole("button", { name: "进入助手" }));
+
+    expect(onSubmit).toHaveBeenCalledWith("  campus-secret  ");
+  });
 });
