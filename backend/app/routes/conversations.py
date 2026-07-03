@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import require_session
 from app.database import get_db
-from app.models import Conversation
-from app.schemas import ConversationCreate, ConversationItem, ConversationList
+from app.models import Conversation, Message
+from app.schemas import ConversationCreate, ConversationItem, ConversationList, MessageList
 
 
 router = APIRouter(
@@ -32,6 +32,20 @@ def create_conversation(
     db.commit()
     db.refresh(db_conversation)
     return db_conversation
+
+
+@router.get("/{conversation_id}/messages", response_model=MessageList)
+def list_messages(conversation_id: int, db: Session = Depends(get_db)) -> MessageList:
+    conversation = db.get(Conversation, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+
+    messages = db.execute(
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc(), Message.id.asc())
+    ).scalars().all()
+    return MessageList(items=messages)
 
 
 @router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)

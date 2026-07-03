@@ -30,3 +30,22 @@ class ConversationItem(BaseModel):
 
 class ConversationList(BaseModel):
     items: list[ConversationItem]
+
+
+class ChatRequest(BaseModel):
+    conversation_id: int
+    message: str
+
+
+class MessageItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    conversation_id: int
+    role: str
+    content: str
+    created_at: datetime
+
+
+class MessageList(BaseModel):
+    items: list[MessageItem]
