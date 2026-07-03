@@ -1,4 +1,11 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = BACKEND_DIR.parent
+DEFAULT_DATABASE_URL = f"sqlite:///{(BACKEND_DIR / 'data' / 'app.db').as_posix()}"
 
 
 class Settings(BaseSettings):
@@ -10,9 +17,12 @@ class Settings(BaseSettings):
     deepseek_api_key: str = "unset"
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
-    database_url: str = "sqlite:///./backend/data/app.db"
+    database_url: str = DEFAULT_DATABASE_URL
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(str(BACKEND_DIR / ".env"), str(REPO_ROOT / ".env")),
+        extra="ignore",
+    )
 
     def __init__(self, **values):
         super().__init__(**values)
