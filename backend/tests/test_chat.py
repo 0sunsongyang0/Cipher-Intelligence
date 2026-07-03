@@ -1,10 +1,13 @@
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import select
+import sqlite3
 
+import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+
+import app.database as database_module
 import app.deepseek as deepseek_module
+from app.auth import COOKIE_NAME
 from app.database import SessionLocal
-from app.main import app
 from app.models import Conversation
 from app.routes import chat as chat_module
 
@@ -14,15 +17,64 @@ PARTIAL_ASSISTANT_RESPONSE = "\u4f60\u597d\uff0c"
 USER_MESSAGE = "\u4f60\u662f\u8c01\uff1f"
 
 
-def login(client) -> None:
+def login(client) -> str:
     response = client.post("/api/auth/login", json={"password": "change-me"})
     assert response.status_code == 200
+    return response.cookies[COOKIE_NAME]
 
 
 def create_conversation(client, title: str = "Chat conversation") -> int:
     response = client.post("/api/conversations", json={"title": title})
     assert response.status_code == 201
     return response.json()["id"]
+
+
+def test_init_db_migrates_existing_conversations_table_with_owner_session_id(
+    tmp_path, monkeypatch
+) -> None:
+    legacy_db_path = tmp_path / "legacy.db"
+
+    with sqlite3.connect(legacy_db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE conversations (
+                id INTEGER PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (1, "Legacy conversation", "2026-07-03T00:00:00+00:00", "2026-07-03T00:00:00+00:00"),
+        )
+        connection.commit()
+
+    migration_engine = create_engine(
+        f"sqlite:///{legacy_db_path}",
+        connect_args={"check_same_thread": False},
+    )
+    migration_session_local = sessionmaker(
+        bind=migration_engine,
+        autocommit=False,
+        autoflush=False,
+    )
+
+    monkeypatch.setattr(database_module, "engine", migration_engine)
+    monkeypatch.setattr(database_module, "SessionLocal", migration_session_local)
+
+    database_module.init_db()
+
+    with sqlite3.connect(legacy_db_path) as connection:
+        columns = {
+            row[1]: row for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
+        }
+        assert "owner_session_id" in columns
+        assert columns["owner_session_id"][3] == 1
+        assert connection.execute(
+            "SELECT owner_session_id FROM conversations WHERE id = 1"
+        ).fetchone()[0] == 0
 
 
 def test_parse_chunk_content_handles_deepseek_data_lines() -> None:
@@ -90,28 +142,29 @@ def test_conversation_access_is_scoped_to_owning_session(client, monkeypatch) ->
 
     monkeypatch.setattr(chat_module, "stream_chat_completion", fake_stream_chat_completion)
 
-    login(client)
+    owner_token = login(client)
     conversation_id = create_conversation(client, title="Owner conversation")
 
-    with TestClient(app) as other_client:
-        login(other_client)
+    client.cookies.clear()
+    login(client)
 
-        list_response = other_client.get("/api/conversations")
-        assert list_response.status_code == 200
-        assert list_response.json()["items"] == []
+    list_response = client.get("/api/conversations")
+    assert list_response.status_code == 200
+    assert list_response.json()["items"] == []
 
-        messages_response = other_client.get(f"/api/conversations/{conversation_id}/messages")
-        assert messages_response.status_code == 404
+    messages_response = client.get(f"/api/conversations/{conversation_id}/messages")
+    assert messages_response.status_code == 404
 
-        chat_response = other_client.post(
-            "/api/chat",
-            json={"conversation_id": conversation_id, "content": USER_MESSAGE},
-        )
-        assert chat_response.status_code == 404
+    chat_response = client.post(
+        "/api/chat",
+        json={"conversation_id": conversation_id, "content": USER_MESSAGE},
+    )
+    assert chat_response.status_code == 404
 
-        delete_response = other_client.delete(f"/api/conversations/{conversation_id}")
-        assert delete_response.status_code == 404
+    delete_response = client.delete(f"/api/conversations/{conversation_id}")
+    assert delete_response.status_code == 404
 
+    client.cookies.set(COOKIE_NAME, owner_token)
     owner_messages_response = client.post(
         "/api/chat",
         json={"conversation_id": conversation_id, "content": USER_MESSAGE},

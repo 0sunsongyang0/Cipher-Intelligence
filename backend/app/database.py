@@ -6,6 +6,8 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
 
+LEGACY_OWNER_SESSION_ID = 0
+
 
 def _ensure_sqlite_directory(database_url: str) -> None:
     sqlite_prefix = "sqlite:///"
@@ -36,10 +38,34 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
+def _migrate_sqlite_conversations_owner_session_id() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    with engine.begin() as connection:
+        conversations_exists = (
+            connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'conversations'"
+            ).fetchone()
+            is not None
+        )
+        if not conversations_exists:
+            return
+
+        rows = connection.exec_driver_sql("PRAGMA table_info(conversations)").fetchall()
+        if any(row[1] == "owner_session_id" for row in rows):
+            return
+
+        connection.exec_driver_sql(
+            f"ALTER TABLE conversations ADD COLUMN owner_session_id INTEGER NOT NULL DEFAULT {LEGACY_OWNER_SESSION_ID}"
+        )
+
+
 def init_db() -> None:
     import app.models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _migrate_sqlite_conversations_owner_session_id()
 
 
 def get_db() -> Generator[Session, None, None]:
