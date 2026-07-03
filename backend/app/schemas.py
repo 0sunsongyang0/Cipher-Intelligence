@@ -34,7 +34,7 @@ class ConversationList(BaseModel):
 
 class ChatRequest(BaseModel):
     conversation_id: int
-    message: str
+    content: str
 
 
 class MessageItem(BaseModel):

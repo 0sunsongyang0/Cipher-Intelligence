@@ -12,6 +12,7 @@ def now_utc() -> datetime:
 
 class Session(Base):
     __tablename__ = "sessions"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
@@ -25,6 +26,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_session_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc, nullable=False

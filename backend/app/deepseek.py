@@ -6,6 +6,18 @@ import httpx
 from app.config import settings
 
 
+def parse_chunk_content(line: str) -> str | None:
+    if not line.startswith("data:"):
+        return None
+
+    data = line[5:].strip()
+    if not data or data == "[DONE]":
+        return None
+
+    chunk = json.loads(data)
+    return chunk["choices"][0]["delta"].get("content")
+
+
 async def stream_chat_completion(messages: Sequence[dict[str, str]]) -> AsyncIterator[str]:
     url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
     payload = {
@@ -23,14 +35,6 @@ async def stream_chat_completion(messages: Sequence[dict[str, str]]) -> AsyncIte
             response.raise_for_status()
 
             async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-
-                data = line[5:].strip()
-                if not data or data == "[DONE]":
-                    continue
-
-                chunk = json.loads(data)
-                content = chunk["choices"][0]["delta"].get("content")
+                content = parse_chunk_content(line)
                 if content:
                     yield content
