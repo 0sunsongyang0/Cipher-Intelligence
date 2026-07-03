@@ -54,11 +54,11 @@ def test_login_sets_secure_cookie_when_enabled(
 
 
 
-def test_unauthenticated_conversations_request_returns_401(client) -> None:
-    response = client.get("/api/conversations")
+def test_unauthenticated_chat_page_redirects_to_public_gate(client) -> None:
+    response = client.get("/chat", follow_redirects=False)
 
-    assert response.status_code == 401
-    assert response.json() == {"detail": "Authentication required"}
+    assert response.status_code in {302, 307}
+    assert response.headers["location"] == "/"
 
 
 
@@ -133,10 +133,10 @@ def test_expired_session_is_rejected(client) -> None:
         db.commit()
 
     client.cookies.set(COOKIE_NAME, expired_token)
-    response = client.get("/api/conversations")
+    response = client.get("/chat", follow_redirects=False)
 
-    assert response.status_code == 401
-    assert response.json() == {"detail": "Authentication required"}
+    assert response.status_code in {302, 307}
+    assert response.headers["location"] == "/"
 
     with SessionLocal() as db:
         session = db.execute(
