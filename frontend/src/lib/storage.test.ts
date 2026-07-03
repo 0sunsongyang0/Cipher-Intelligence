@@ -83,4 +83,26 @@ describe("storage helpers", () => {
 
     expect(loadChatState(fallback)).toEqual(fallback);
   });
+
+  it("returns the fallback when persisted state has the wrong shape", () => {
+    const fallback: StoredChatState = {
+      activeConversationId: null,
+      conversations: [],
+      settings: {
+        modelId: "fallback-model",
+        systemPrompt: ""
+      }
+    };
+
+    localStorage.setItem(
+      "webllm-chat-state",
+      JSON.stringify({
+        activeConversationId: 123,
+        conversations: "not-an-array",
+        settings: null
+      })
+    );
+
+    expect(loadChatState(fallback)).toEqual(fallback);
+  });
 });
