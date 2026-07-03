@@ -2,12 +2,17 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth import require_session
 from app.database import get_db
 from app.models import Conversation
 from app.schemas import ConversationCreate, ConversationItem, ConversationList
 
 
-router = APIRouter(prefix="/api/conversations", tags=["conversations"])
+router = APIRouter(
+    prefix="/api/conversations",
+    tags=["conversations"],
+    dependencies=[Depends(require_session)],
+)
 
 
 @router.get("", response_model=ConversationList)
