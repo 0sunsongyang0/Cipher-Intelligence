@@ -18,16 +18,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title=settings.app_name, lifespan=lifespan)
-app.include_router(auth_router)
-app.include_router(chat_router)
-app.include_router(conversations_router)
-app.mount("/assets", StaticFiles(directory=FRONTEND_ASSETS_DIR), name="frontend-assets")
+def create_app() -> FastAPI:
+    app = FastAPI(title=settings.app_name, lifespan=lifespan)
+    app.include_router(auth_router)
+    app.include_router(chat_router)
+    app.include_router(conversations_router)
+    if FRONTEND_ASSETS_DIR.is_dir():
+        app.mount("/assets", StaticFiles(directory=FRONTEND_ASSETS_DIR), name="frontend-assets")
+
+    @app.get("/api/health")
+    def health_check() -> dict[str, str]:
+        return {"status": "ok", "service": "campus-llm-assistant"}
+
+    app.include_router(frontend_router)
+    return app
 
 
-@app.get("/api/health")
-def health_check() -> dict[str, str]:
-    return {"status": "ok", "service": "campus-llm-assistant"}
-
-
-app.include_router(frontend_router)
+app = create_app()

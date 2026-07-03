@@ -1,4 +1,5 @@
 from pathlib import Path
+import importlib
 
 
 def login(client) -> None:
@@ -62,3 +63,24 @@ def test_api_paths_are_not_swallowed_by_frontend_spa_fallback(client) -> None:
     response = client.get("/api/not-a-real-endpoint", follow_redirects=False)
 
     assert response.status_code == 404
+
+
+def test_exact_api_path_is_not_swallowed_by_frontend_spa_fallback(client) -> None:
+    response = client.get("/api", follow_redirects=False)
+
+    assert response.status_code == 404
+
+
+def test_non_get_api_paths_are_not_swallowed_by_frontend_spa_fallback(client) -> None:
+    response = client.post("/api/not-a-real-endpoint", follow_redirects=False)
+
+    assert response.status_code == 404
+
+
+def test_app_creation_skips_assets_mount_when_built_assets_are_absent(monkeypatch) -> None:
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(main_module, "FRONTEND_ASSETS_DIR", Path("frontend/dist/missing-assets"))
+
+    app = main_module.create_app()
+
+    assert not any(getattr(route, "path", None) == "/assets" for route in app.routes)
