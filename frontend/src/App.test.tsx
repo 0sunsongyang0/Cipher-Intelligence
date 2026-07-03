@@ -1,0 +1,67 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { App } from "./App";
+import * as api from "./lib/api";
+
+vi.mock("./lib/api", () => ({
+  checkSession: vi.fn(),
+  login: vi.fn()
+}));
+
+describe("App", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("shows a loading state, restores the session, and redirects unauthenticated chat visits to login", async () => {
+    const checkSession = vi.mocked(api.checkSession);
+    let resolveSession: ((value: boolean) => void) | undefined;
+
+    checkSession.mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        resolveSession = resolve;
+      })
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "正在恢复访问会话" })
+    ).toBeInTheDocument();
+
+    resolveSession?.(false);
+
+    expect(
+      await screen.findByRole("heading", { name: "兔兔炸弹的大模型助手" })
+    ).toBeInTheDocument();
+  });
+
+  it("submits login and redirects to chat after a successful login", async () => {
+    const user = userEvent.setup();
+    const checkSession = vi.mocked(api.checkSession);
+    const login = vi.mocked(api.login);
+
+    checkSession.mockResolvedValue(false);
+    login.mockResolvedValue(undefined);
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await user.type(await screen.findByLabelText("访问口令"), "campus-secret");
+    await user.click(screen.getByRole("button", { name: "进入助手" }));
+
+    expect(login).toHaveBeenCalledWith("campus-secret");
+    expect(
+      await screen.findByRole("heading", { name: "对话界面正在准备中" })
+    ).toBeInTheDocument();
+  });
+});

@@ -19,4 +19,20 @@ describe("LoginPage", () => {
 
     expect(onSubmit).toHaveBeenCalledWith("campus-secret");
   });
+
+  it("prevents blank password submission", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    render(<LoginPage onSubmit={onSubmit} isSubmitting={false} error={null} />);
+
+    const button = screen.getByRole("button", { name: "进入助手" });
+
+    expect(button).toBeDisabled();
+
+    await user.type(screen.getByLabelText("访问口令"), "   ");
+
+    expect(button).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
 });
