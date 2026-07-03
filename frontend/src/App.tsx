@@ -83,9 +83,11 @@ export function App() {
     return (
       <main className="shell shell--centered">
         <section className="panel panel--loading">
-          <p className="eyebrow">校园专用入口</p>
-          <h1>正在恢复访问会话</h1>
-          <p className="muted">请稍候，我们正在检查是否已有可用登录状态。</p>
+          <p className="eyebrow">WebLLM access</p>
+          <h1>Restoring local workspace</h1>
+          <p className="muted">
+            Checking for an existing browser session before opening the local model chat.
+          </p>
         </section>
       </main>
     );

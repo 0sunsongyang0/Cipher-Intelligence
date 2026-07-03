@@ -50,7 +50,7 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByRole("heading", { name: "正在恢复访问会话" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Restoring local workspace" })).toBeInTheDocument();
 
     resolveSession?.(false);
 
