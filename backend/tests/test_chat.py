@@ -5,8 +5,6 @@ from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
-from fastapi import HTTPException, Request
-from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -47,20 +45,6 @@ def chat_client():
         redoc_url=None,
         openapi_url=None,
     )
-
-    @app.exception_handler(HTTPException)
-    async def rewrite_auth_exception(_request: Request, exc: HTTPException):
-        if exc.status_code == 401 and exc.detail == "Authentication required":
-            return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
-
-        content = exc.detail
-        if not isinstance(content, dict):
-            content = {"detail": content}
-        return JSONResponse(
-            status_code=exc.status_code,
-            content=content,
-            headers=exc.headers,
-        )
 
     app.include_router(auth_router)
     app.include_router(chat_router)

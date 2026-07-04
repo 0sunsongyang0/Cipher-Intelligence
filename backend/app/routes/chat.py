@@ -1,9 +1,11 @@
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
-from app.auth import require_session
+from app.auth import COOKIE_NAME, get_session_record
+from app.database import get_db
 from app.deepseek import stream_chat_completion
 from app.models import Session as SessionModel
 from app.schemas import ChatRequest
@@ -12,10 +14,23 @@ from app.schemas import ChatRequest
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
+def require_chat_session(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> SessionModel:
+    session = get_session_record(db, request.cookies.get(COOKIE_NAME))
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return session
+
+
 @router.post("")
 async def chat(
     payload: ChatRequest,
-    current_session: SessionModel = Depends(require_session),
+    current_session: SessionModel = Depends(require_chat_session),
 ) -> StreamingResponse:
     del current_session
     if not payload.messages:
