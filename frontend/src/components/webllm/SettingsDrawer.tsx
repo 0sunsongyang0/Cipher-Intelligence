@@ -31,7 +31,7 @@ export function SettingsDrawer({
         <dt>Provider</dt>
         <dd>DeepSeek campus backend</dd>
         <dt>Model</dt>
-        <dd>{settings.modelId ?? "DeepSeek campus model"}</dd>
+        <dd>Backend-configured model</dd>
         <dt>System prompt</dt>
         <dd>{settings.systemPrompt || "Not set"}</dd>
       </dl>

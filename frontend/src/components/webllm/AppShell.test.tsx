@@ -49,6 +49,7 @@ describe("AppShell", () => {
       sendMessage,
       setActiveConversationId,
       settings: {
+        modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
         systemPrompt: "You are a helpful assistant."
       }
     });
@@ -100,6 +101,8 @@ describe("AppShell", () => {
     await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Read-only backend details")).toBeInTheDocument();
     expect(screen.getByText("DeepSeek campus backend")).toBeInTheDocument();
+    expect(screen.getByText("Backend-configured model")).toBeInTheDocument();
+    expect(screen.queryByText("Llama-3.1-8B-Instruct-q4f32_1-MLC")).not.toBeInTheDocument();
   });
 
   it("shows a session error when logout fails", () => {
