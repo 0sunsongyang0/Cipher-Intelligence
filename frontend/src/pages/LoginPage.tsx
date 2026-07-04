@@ -28,17 +28,17 @@ export function LoginPage({
     <main className="auth-shell">
       <section className="auth-panel">
         <div className="auth-panel__intro">
-          <p className="eyebrow">WebLLM-ready access</p>
-          <h1>Enter the local workspace</h1>
+          <p className="eyebrow">Campus access</p>
+          <h1>Enter the campus chat</h1>
           <p className="lead">
-            Sign in with the shared passphrase to open the browser-based local model chat.
+            Sign in with the shared passphrase to open the DeepSeek-backed campus assistant.
           </p>
         </div>
 
         <div className="auth-panel__meta" aria-hidden="true">
           <span>Private session</span>
-          <span>Local runtime</span>
-          <span>Browser-native UI</span>
+          <span>Shared backend</span>
+          <span>DeepSeek mode</span>
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>

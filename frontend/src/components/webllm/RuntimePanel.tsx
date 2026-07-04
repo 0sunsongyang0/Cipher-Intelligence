@@ -1,48 +1,46 @@
-import type { WebLlmInitProgress } from "../../types";
+import type { RuntimeStatus } from "../../types";
 
 type RuntimePanelProps = {
   error: string | null;
-  initProgress: WebLlmInitProgress | null;
-  onInitialize: () => Promise<void> | void;
-  runtimeStatus: "idle" | "loading" | "ready" | "error";
+  runtimeStatus: RuntimeStatus;
 };
 
 function getStatusTitle(runtimeStatus: RuntimePanelProps["runtimeStatus"]): string {
   switch (runtimeStatus) {
     case "loading":
-      return "Preparing local runtime";
+      return "Backend responding";
     case "ready":
-      return "Runtime ready";
+      return "Backend ready";
     case "error":
-      return "Runtime needs attention";
+      return "Backend needs attention";
     default:
-      return "Runtime not started";
+      return "Backend pending";
   }
 }
 
 function getStatusBody(runtimeStatus: RuntimePanelProps["runtimeStatus"]): string {
   switch (runtimeStatus) {
     case "loading":
-      return "Downloading and warming the model so prompts can run entirely in this browser.";
+      return "DeepSeek is streaming a response from the shared campus backend.";
     case "ready":
-      return "The model is loaded and ready to answer new prompts.";
+      return "The shared backend is available for new DeepSeek prompts.";
     case "error":
-      return "The local model could not finish loading. Review the error and retry initialization.";
+      return "The campus backend could not complete the last request. Review the error and try another prompt.";
     default:
-      return "Initialize the runtime to enable local responses in this session.";
+      return "Waiting for the campus chat backend to become available.";
   }
 }
 
 function getActionLabel(runtimeStatus: RuntimePanelProps["runtimeStatus"]): string {
   switch (runtimeStatus) {
     case "loading":
-      return "Runtime starting";
+      return "Backend responding";
     case "error":
-      return "Retry runtime";
+      return "Backend unavailable";
     case "ready":
-      return "Runtime ready";
+      return "Backend ready";
     default:
-      return "Initialize runtime";
+      return "Backend pending";
   }
 }
 
@@ -61,15 +59,13 @@ function getStatusTone(runtimeStatus: RuntimePanelProps["runtimeStatus"]): strin
 
 export function RuntimePanel({
   error,
-  initProgress,
-  onInitialize,
   runtimeStatus
 }: RuntimePanelProps) {
   return (
     <section className="runtime-panel" aria-label="Runtime">
       <div className="runtime-panel__header">
         <div>
-          <p className="eyebrow">Runtime</p>
+          <p className="eyebrow">Backend</p>
           <h2>{getStatusTitle(runtimeStatus)}</h2>
         </div>
         <span className={`status-pill${getStatusTone(runtimeStatus)}`}>{runtimeStatus}</span>
@@ -77,24 +73,13 @@ export function RuntimePanel({
 
       <p className="runtime-panel__body">{getStatusBody(runtimeStatus)}</p>
 
-      {initProgress ? (
-        <p className="runtime-panel__progress">
-          {initProgress.text} ({Math.round(initProgress.progress * 100)}%)
-        </p>
-      ) : null}
-
       {error ? (
         <p className="status-banner status-banner--error" role="alert">
           {error}
         </p>
       ) : null}
 
-      <button
-        className="secondary-button"
-        type="button"
-        onClick={() => void onInitialize()}
-        disabled={runtimeStatus === "loading" || runtimeStatus === "ready"}
-      >
+      <button className="secondary-button" type="button" disabled>
         {getActionLabel(runtimeStatus)}
       </button>
     </section>

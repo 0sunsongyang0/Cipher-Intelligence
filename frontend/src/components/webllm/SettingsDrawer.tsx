@@ -1,9 +1,9 @@
-import type { WebLlmSettings } from "../../types";
+import type { PersistedChatState } from "../../types";
 
 type SettingsDrawerProps = {
   onClose: () => void;
   open: boolean;
-  settings: WebLlmSettings;
+  settings: PersistedChatState["settings"];
 };
 
 export function SettingsDrawer({
@@ -26,10 +26,12 @@ export function SettingsDrawer({
           Close settings
         </button>
       </div>
-      <p className="settings-drawer__lead">Read-only runtime details</p>
+      <p className="settings-drawer__lead">Read-only backend details</p>
       <dl className="settings-drawer__details">
+        <dt>Provider</dt>
+        <dd>DeepSeek campus backend</dd>
         <dt>Model</dt>
-        <dd>{settings.modelId}</dd>
+        <dd>{settings.modelId ?? "DeepSeek campus model"}</dd>
         <dt>System prompt</dt>
         <dd>{settings.systemPrompt || "Not set"}</dd>
       </dl>

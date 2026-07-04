@@ -10,7 +10,7 @@ describe("LoginPage", () => {
 
     render(<LoginPage onSubmit={onSubmit} isSubmitting={false} error={null} />);
 
-    expect(screen.getByRole("heading", { name: "Enter the local workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Enter the campus chat" })).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Access passphrase"), "campus-secret");
     await user.click(screen.getByRole("button", { name: "Open chat" }));

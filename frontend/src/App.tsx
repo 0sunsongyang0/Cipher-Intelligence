@@ -10,7 +10,7 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "暂时无法登录，请稍后重试。";
+  return "Unable to sign in. Please try again.";
 }
 
 export function App() {
@@ -83,10 +83,10 @@ export function App() {
     return (
       <main className="shell shell--centered">
         <section className="panel panel--loading">
-          <p className="eyebrow">WebLLM access</p>
-          <h1>Restoring local workspace</h1>
+          <p className="eyebrow">Campus access</p>
+          <h1>Restoring campus chat</h1>
           <p className="muted">
-            Checking for an existing browser session before opening the local model chat.
+            Checking for an existing session before opening the DeepSeek campus chat.
           </p>
         </section>
       </main>

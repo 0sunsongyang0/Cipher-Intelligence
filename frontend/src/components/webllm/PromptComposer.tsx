@@ -46,11 +46,13 @@ export function PromptComposer({
         value={content}
         onChange={(event) => setContent(event.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Ask WebLLM something..."
+        placeholder="Ask the campus assistant something..."
         disabled={disabled}
       />
       <div className="prompt-composer__footer">
-        <p className="prompt-composer__hint">Press Enter to send, Shift+Enter for a new line.</p>
+        <p className="prompt-composer__hint">
+          Press Enter to send to DeepSeek, Shift+Enter for a new line.
+        </p>
         <button className="primary-button" type="submit" disabled={isSubmitDisabled}>
           {isGenerating ? "Sending..." : "Send"}
         </button>

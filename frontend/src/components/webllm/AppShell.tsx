@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useWebLLMChat } from "../../hooks/useWebLLMChat";
+import { useState } from "react";
+import { useServerChat } from "../../hooks/useServerChat";
 import { ChatViewport } from "./ChatViewport";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { PromptComposer } from "./PromptComposer";
@@ -18,29 +18,21 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
     activeConversationId,
     conversations,
     error,
-    initializeEngine,
-    initProgress,
     isGenerating,
     runtimeStatus,
     sendMessage,
     setActiveConversationId,
     settings
-  } = useWebLLMChat();
-
-  useEffect(() => {
-    void initializeEngine().catch(() => {
-      return;
-    });
-  }, [initializeEngine]);
+  } = useServerChat();
 
   return (
     <main className="webllm-shell">
       <header className="shell-header">
         <div className="shell-header__copy">
-          <p className="eyebrow">Browser runtime</p>
-          <h1>Local model chat</h1>
+          <p className="eyebrow">Campus deployment</p>
+          <h1>DeepSeek campus chat</h1>
           <p className="shell-header__lead">
-            Keep conversations on-device while the WebLLM runtime handles prompts in the browser.
+            Use the shared campus backend for DeepSeek-assisted conversations in this workspace.
           </p>
         </div>
         <div className="shell-header__actions">
@@ -75,8 +67,6 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
         <section className="workspace-shell">
           <RuntimePanel
             error={runtimeStatus === "error" ? error : null}
-            initProgress={initProgress}
-            onInitialize={initializeEngine}
             runtimeStatus={runtimeStatus}
           />
 
@@ -87,7 +77,7 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
           />
 
           <PromptComposer
-            disabled={runtimeStatus !== "ready" || isGenerating}
+            disabled={isGenerating}
             isGenerating={isGenerating}
             onSubmit={sendMessage}
           />

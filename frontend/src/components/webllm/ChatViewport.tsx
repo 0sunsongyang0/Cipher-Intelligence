@@ -22,7 +22,7 @@ export function ChatViewport({
         </div>
         <p className="chat-viewport__meta">
           {messages.length === 0
-            ? "Send a prompt to begin this local conversation."
+            ? "Send a prompt to begin this campus conversation."
             : `${messages.length} messages in this conversation.`}
         </p>
       </header>
@@ -37,7 +37,7 @@ export function ChatViewport({
         <div className="empty-state">
           <p className="eyebrow">Ready when you are</p>
           <h3>No messages yet</h3>
-          <p>Ask for a summary, brainstorm, or draft to start a browser-local exchange.</p>
+          <p>Ask for a summary, brainstorm, or draft to start a DeepSeek-backed exchange.</p>
         </div>
       ) : (
         <ol className="message-thread">
@@ -57,7 +57,7 @@ export function ChatViewport({
         </ol>
       )}
 
-      {isGenerating ? <p className="streaming-indicator">Generating response...</p> : null}
+      {isGenerating ? <p className="streaming-indicator">DeepSeek is responding...</p> : null}
     </section>
   );
 }

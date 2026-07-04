@@ -20,7 +20,7 @@ vi.mock("./components/webllm/AppShell", () => ({
     sessionError?: string | null;
   }) => (
     <div>
-      <h1>WebLLM App Shell</h1>
+      <h1>DeepSeek Campus App Shell</h1>
       {sessionError ? <p role="alert">{sessionError}</p> : null}
       <button type="button" onClick={() => void onLogout()}>
         Logout
@@ -50,12 +50,12 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByRole("heading", { name: "Restoring local workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Restoring campus chat" })).toBeInTheDocument();
 
     resolveSession?.(false);
 
     expect(
-      await screen.findByRole("heading", { name: "Enter the local workspace" })
+      await screen.findByRole("heading", { name: "Enter the campus chat" })
     ).toBeInTheDocument();
   });
 
@@ -77,10 +77,10 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Open chat" }));
 
     expect(login).toHaveBeenCalledWith("campus-secret");
-    expect(await screen.findByRole("heading", { name: "WebLLM App Shell" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "DeepSeek Campus App Shell" })).toBeInTheDocument();
   });
 
-  it("renders the webllm shell for authenticated chat visits", async () => {
+  it("renders the campus shell for authenticated chat visits", async () => {
     vi.mocked(api.checkSession).mockResolvedValue(true);
 
     render(
@@ -89,7 +89,7 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole("heading", { name: "WebLLM App Shell" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "DeepSeek Campus App Shell" })).toBeInTheDocument();
   });
 
   it("logs out from the authenticated shell and returns to login", async () => {
@@ -107,7 +107,7 @@ describe("App", () => {
 
     expect(api.logout).toHaveBeenCalledTimes(1);
     expect(
-      await screen.findByRole("heading", { name: "Enter the local workspace" })
+      await screen.findByRole("heading", { name: "Enter the campus chat" })
     ).toBeInTheDocument();
   });
 
@@ -125,7 +125,7 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: "Logout" }));
 
     expect(api.logout).toHaveBeenCalledTimes(1);
-    expect(await screen.findByRole("heading", { name: "WebLLM App Shell" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "DeepSeek Campus App Shell" })).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Logout failed");
   });
 });
