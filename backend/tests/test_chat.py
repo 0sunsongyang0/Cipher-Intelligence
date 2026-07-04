@@ -247,6 +247,40 @@ def test_chat_streams_plain_text_response_for_authenticated_session(chat_client,
     assert response.text == "Hello campus"
 
 
+def test_primary_app_mounts_server_chat_route(client, monkeypatch) -> None:
+    login(client)
+
+    async def fake_stream_chat_completion(messages):
+        assert messages == [{"role": "user", "content": "ping"}]
+        yield "ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "ping"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+def test_server_chat_route_returns_503_when_deepseek_key_is_missing(client, monkeypatch) -> None:
+    login(client)
+    monkeypatch.setattr(settings, "deepseek_api_key", "")
+
+    response = client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "ping"}]},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "DeepSeek API key is not configured."}
+
+
 def test_chat_rejects_empty_message_history(chat_client) -> None:
     login(chat_client)
 

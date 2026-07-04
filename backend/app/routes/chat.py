@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import COOKIE_NAME, get_session_record
 from app.database import get_db
-from app.deepseek import stream_chat_completion
+from app.deepseek import DeepSeekConfigurationError, stream_chat_completion
 from app.models import Session as SessionModel
 from app.schemas import ChatRequest
 
@@ -49,6 +49,11 @@ async def chat(
         first_chunk = await anext(stream)
     except StopAsyncIteration:
         first_chunk = ""
+    except DeepSeekConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

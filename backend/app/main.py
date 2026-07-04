@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import init_db
 from app.routes.auth import router as auth_router
+from app.routes.chat import router as chat_router
 from app.routes.frontend import FRONTEND_ASSETS_DIR, router as frontend_router
 
 
@@ -25,6 +26,7 @@ def create_app() -> FastAPI:
         openapi_url=None,
     )
     app.include_router(auth_router)
+    app.include_router(chat_router)
     if FRONTEND_ASSETS_DIR.is_dir():
         app.mount("/assets", StaticFiles(directory=FRONTEND_ASSETS_DIR), name="frontend-assets")
 
