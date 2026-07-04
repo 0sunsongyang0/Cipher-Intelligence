@@ -10,7 +10,6 @@ from app.schemas import ChatRequest
 
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 
 
 @router.post("")
@@ -29,14 +28,6 @@ async def chat(
         {"role": message.role, "content": message.content}
         for message in payload.messages
     ]
-    if not message_history or message_history[0] != {
-        "role": "system",
-        "content": DEFAULT_SYSTEM_PROMPT,
-    }:
-        message_history.insert(
-            0,
-            {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
-        )
 
     stream = stream_chat_completion(message_history)
     try:

@@ -29,7 +29,7 @@ def login(client) -> str:
 
 
 @pytest.fixture()
-def client():
+def chat_client():
     test_database_path = Path("backend/data/test.db")
     engine.dispose()
     test_database_path.unlink(missing_ok=True)
@@ -208,8 +208,8 @@ def test_init_db_repairs_missing_owner_session_id_index_when_column_already_exis
             pass
 
 
-def test_chat_requires_authenticated_session(client) -> None:
-    response = client.post(
+def test_chat_requires_authenticated_session(chat_client) -> None:
+    response = chat_client.post(
         "/api/chat",
         json={"messages": [{"role": "user", "content": "hello"}]},
     )
@@ -218,8 +218,8 @@ def test_chat_requires_authenticated_session(client) -> None:
     assert response.json() == {"detail": "Not authenticated"}
 
 
-def test_chat_streams_plain_text_response_for_authenticated_session(client, monkeypatch) -> None:
-    login(client)
+def test_chat_streams_plain_text_response_for_authenticated_session(chat_client, monkeypatch) -> None:
+    login(chat_client)
 
     async def fake_stream_chat_completion(messages):
         assert messages == [
@@ -234,10 +234,13 @@ def test_chat_streams_plain_text_response_for_authenticated_session(client, monk
         fake_stream_chat_completion,
     )
 
-    response = client.post(
+    response = chat_client.post(
         "/api/chat",
         json={
-            "messages": [{"role": "user", "content": "hello"}]
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "hello"},
+            ]
         },
     )
 
@@ -246,8 +249,39 @@ def test_chat_streams_plain_text_response_for_authenticated_session(client, monk
     assert response.text == "Hello campus"
 
 
-def test_chat_surfaces_upstream_errors_for_authenticated_session(client, monkeypatch) -> None:
-    login(client)
+def test_chat_forwards_message_history_exactly_as_provided(chat_client, monkeypatch) -> None:
+    login(chat_client)
+
+    async def fake_stream_chat_completion(messages):
+        assert messages == [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+            {"role": "user", "content": "follow up"},
+        ]
+        yield "done"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        json={
+            "messages": [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+                {"role": "user", "content": "follow up"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "done"
+
+
+def test_chat_surfaces_upstream_errors_for_authenticated_session(chat_client, monkeypatch) -> None:
+    login(chat_client)
 
     async def failing_stream_chat_completion(messages):
         if messages:
@@ -260,7 +294,7 @@ def test_chat_surfaces_upstream_errors_for_authenticated_session(client, monkeyp
         failing_stream_chat_completion,
     )
 
-    response = client.post(
+    response = chat_client.post(
         "/api/chat",
         json={"messages": [{"role": "user", "content": "hello"}]},
     )
