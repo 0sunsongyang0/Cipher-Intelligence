@@ -2,6 +2,8 @@ import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from shutil import rmtree
+from tempfile import mkdtemp
 
 import pytest
 from fastapi import FastAPI
@@ -62,11 +64,23 @@ def chat_client():
     test_database_path.unlink(missing_ok=True)
 
 
+@pytest.fixture()
+def tmp_path():
+    base_dir = Path(".pytest-tmp")
+    base_dir.mkdir(exist_ok=True)
+    temp_dir = Path(mkdtemp(dir=base_dir))
+
+    try:
+        yield temp_dir
+    finally:
+        rmtree(temp_dir, ignore_errors=True)
+
+
 def test_init_db_migrates_existing_conversations_table_with_owner_session_id(
+    tmp_path,
     monkeypatch,
 ) -> None:
-    legacy_db_path = Path("backend/data/test-legacy.db")
-    legacy_db_path.unlink(missing_ok=True)
+    legacy_db_path = tmp_path / "legacy.db"
     migration_engine = None
 
     try:
@@ -128,10 +142,10 @@ def test_init_db_migrates_existing_conversations_table_with_owner_session_id(
 
 
 def test_init_db_repairs_missing_owner_session_id_index_when_column_already_exists(
+    tmp_path,
     monkeypatch,
 ) -> None:
-    intermediate_db_path = Path("backend/data/test-intermediate.db")
-    intermediate_db_path.unlink(missing_ok=True)
+    intermediate_db_path = tmp_path / "intermediate.db"
     migration_engine = None
 
     try:
@@ -233,6 +247,18 @@ def test_chat_streams_plain_text_response_for_authenticated_session(chat_client,
     assert response.text == "Hello campus"
 
 
+def test_chat_rejects_empty_message_history(chat_client) -> None:
+    login(chat_client)
+
+    response = chat_client.post(
+        "/api/chat",
+        json={"messages": []},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "At least one message is required"}
+
+
 def test_chat_forwards_message_history_exactly_as_provided(chat_client, monkeypatch) -> None:
     login(chat_client)
 
@@ -285,6 +311,28 @@ def test_chat_surfaces_upstream_errors_for_authenticated_session(chat_client, mo
 
     assert response.status_code == 502
     assert response.json() == {"detail": "DeepSeek upstream returned 401 Unauthorized"}
+
+
+def test_chat_surfaces_synchronous_upstream_errors_for_authenticated_session(
+    chat_client, monkeypatch
+) -> None:
+    login(chat_client)
+
+    def failing_stream_chat_completion(_messages):
+        raise RuntimeError("DeepSeek request setup failed")
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        failing_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "DeepSeek request setup failed"}
 
 
 def test_server_conversation_routes_are_not_mounted_in_primary_app(client) -> None:

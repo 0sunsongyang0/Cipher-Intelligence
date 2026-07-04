@@ -44,8 +44,8 @@ async def chat(
         for message in payload.messages
     ]
 
-    stream = stream_chat_completion(message_history)
     try:
+        stream = stream_chat_completion(message_history)
         first_chunk = await anext(stream)
     except StopAsyncIteration:
         first_chunk = ""
