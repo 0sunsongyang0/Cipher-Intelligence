@@ -1,8 +1,8 @@
-import type { StoredChatState } from "../types";
+import type { PersistedChatState, StoredChatState } from "../types";
 
 const CHAT_STATE_STORAGE_KEY = "webllm-chat-state";
 
-export type { StoredChatState } from "../types";
+export type { PersistedChatState, StoredChatState } from "../types";
 
 function removeStoredChatState(): void {
   try {
@@ -12,12 +12,12 @@ function removeStoredChatState(): void {
   }
 }
 
-function isValidChatState(value: unknown): value is StoredChatState {
+function isValidChatState(value: unknown): value is PersistedChatState {
   if (typeof value !== "object" || value === null) {
     return false;
   }
 
-  const candidate = value as Partial<StoredChatState>;
+  const candidate = value as Partial<PersistedChatState>;
 
   if (
     candidate.activeConversationId !== null &&
@@ -33,7 +33,9 @@ function isValidChatState(value: unknown): value is StoredChatState {
   if (
     typeof candidate.settings !== "object" ||
     candidate.settings === null ||
-    typeof candidate.settings.modelId !== "string" ||
+    ("modelId" in candidate.settings &&
+      candidate.settings.modelId !== undefined &&
+      typeof candidate.settings.modelId !== "string") ||
     typeof candidate.settings.systemPrompt !== "string"
   ) {
     return false;
@@ -68,7 +70,13 @@ function isValidChatState(value: unknown): value is StoredChatState {
   });
 }
 
-export function loadChatState(fallback?: StoredChatState): StoredChatState | null {
+export function loadChatState(fallback: StoredChatState): StoredChatState | null;
+export function loadChatState(
+  fallback?: PersistedChatState
+): PersistedChatState | null;
+export function loadChatState(
+  fallback?: PersistedChatState
+): PersistedChatState | null {
   let rawValue: string | null;
 
   try {
@@ -96,7 +104,7 @@ export function loadChatState(fallback?: StoredChatState): StoredChatState | nul
   }
 }
 
-export function saveChatState(state: StoredChatState): void {
+export function saveChatState(state: PersistedChatState): void {
   try {
     localStorage.setItem(CHAT_STATE_STORAGE_KEY, JSON.stringify(state));
   } catch {

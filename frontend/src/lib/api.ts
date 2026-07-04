@@ -1,3 +1,5 @@
+import type { OutboundChatMessage } from "../types";
+
 type SessionStatus = {
   authenticated: boolean;
 };
@@ -52,4 +54,27 @@ export async function logout(): Promise<void> {
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
   }
+}
+
+export async function streamChat(
+  messages: OutboundChatMessage[]
+): Promise<ReadableStream<Uint8Array>> {
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ messages })
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  if (response.body === null) {
+    throw new Error("Chat response did not include a readable stream.");
+  }
+
+  return response.body;
 }

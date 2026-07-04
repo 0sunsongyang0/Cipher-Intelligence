@@ -3,6 +3,7 @@ import {
   clearChatState,
   loadChatState,
   saveChatState,
+  type PersistedChatState,
   type StoredChatState
 } from "./storage";
 
@@ -59,6 +60,20 @@ describe("storage helpers", () => {
     saveChatState(savedState);
 
     expect(loadChatState()).toEqual(savedState);
+  });
+
+  it("accepts server-backed chat settings without requiring a model id", () => {
+    const serverState: PersistedChatState = {
+      activeConversationId: "conversation-1",
+      conversations: savedState.conversations,
+      settings: {
+        systemPrompt: "Answer from the server"
+      }
+    };
+
+    saveChatState(serverState);
+
+    expect(loadChatState()).toEqual(serverState);
   });
 
   it("clears the persisted chat state", () => {
