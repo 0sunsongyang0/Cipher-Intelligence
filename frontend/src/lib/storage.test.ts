@@ -76,6 +76,34 @@ describe("storage helpers", () => {
     expect(loadChatState()).toEqual(serverState);
   });
 
+  it("injects the fallback model id when old callers load server-backed state", () => {
+    const serverState: PersistedChatState = {
+      activeConversationId: "conversation-1",
+      conversations: savedState.conversations,
+      settings: {
+        systemPrompt: "Answer from the server"
+      }
+    };
+    const fallback: StoredChatState = {
+      activeConversationId: null,
+      conversations: [],
+      settings: {
+        modelId: "fallback-webllm-model",
+        systemPrompt: "Fallback prompt"
+      }
+    };
+
+    saveChatState(serverState);
+
+    expect(loadChatState(fallback)).toEqual({
+      ...serverState,
+      settings: {
+        modelId: "fallback-webllm-model",
+        systemPrompt: "Answer from the server"
+      }
+    });
+  });
+
   it("clears the persisted chat state", () => {
     saveChatState(savedState);
 

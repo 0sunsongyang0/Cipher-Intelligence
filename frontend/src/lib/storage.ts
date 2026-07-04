@@ -70,6 +70,27 @@ function isValidChatState(value: unknown): value is PersistedChatState {
   });
 }
 
+function normalizeForFallback(
+  state: PersistedChatState,
+  fallback?: PersistedChatState
+): PersistedChatState {
+  if (
+    fallback !== undefined &&
+    typeof fallback.settings.modelId === "string" &&
+    state.settings.modelId === undefined
+  ) {
+    return {
+      ...state,
+      settings: {
+        ...state.settings,
+        modelId: fallback.settings.modelId
+      }
+    };
+  }
+
+  return state;
+}
+
 export function loadChatState(fallback: StoredChatState): StoredChatState | null;
 export function loadChatState(
   fallback?: PersistedChatState
@@ -97,7 +118,7 @@ export function loadChatState(
       return fallback ?? null;
     }
 
-    return parsedValue;
+    return normalizeForFallback(parsedValue, fallback);
   } catch {
     removeStoredChatState();
     return fallback ?? null;
