@@ -32,9 +32,13 @@ class ConversationList(BaseModel):
     items: list[ConversationItem]
 
 
-class ChatRequest(BaseModel):
-    conversation_id: int
+class ChatMessageInput(BaseModel):
+    role: str
     content: str
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessageInput]
 
 
 class MessageItem(BaseModel):
