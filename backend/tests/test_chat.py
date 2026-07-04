@@ -6,6 +6,7 @@ from shutil import rmtree
 from tempfile import mkdtemp
 
 import pytest
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -17,6 +18,7 @@ from app.routes.auth import router as auth_router
 from app.database import engine
 from app.config import settings
 from app.database import init_db
+from app.deepseek import stream_chat_completion
 from app.rate_limit import reset_failed_attempts
 from app.routes.chat import router as chat_router
 from app.routes.frontend import FRONTEND_ASSETS_DIR, router as frontend_router
@@ -268,9 +270,12 @@ def test_primary_app_mounts_server_chat_route(client, monkeypatch) -> None:
     assert response.text == "ok"
 
 
-def test_server_chat_route_returns_503_when_deepseek_key_is_missing(client, monkeypatch) -> None:
+@pytest.mark.parametrize("api_key", ["", "unset", "   "])
+def test_server_chat_route_returns_503_when_deepseek_key_is_missing(
+    client, monkeypatch, api_key
+) -> None:
     login(client)
-    monkeypatch.setattr(settings, "deepseek_api_key", "")
+    monkeypatch.setattr(settings, "deepseek_api_key", api_key)
 
     response = client.post(
         "/api/chat",
@@ -279,6 +284,50 @@ def test_server_chat_route_returns_503_when_deepseek_key_is_missing(client, monk
 
     assert response.status_code == 503
     assert response.json() == {"detail": "DeepSeek API key is not configured."}
+
+
+@pytest.mark.anyio
+async def test_stream_chat_completion_translates_http_status_errors(monkeypatch) -> None:
+    original_async_client = httpx.AsyncClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code=401, request=request)
+
+    def async_client_with_mock_transport(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(settings, "deepseek_api_key", "test-key")
+    monkeypatch.setattr("app.deepseek.httpx.AsyncClient", async_client_with_mock_transport)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"^DeepSeek upstream returned 401 Unauthorized$",
+    ):
+        async for _chunk in stream_chat_completion([{"role": "user", "content": "ping"}]):
+            pass
+
+
+@pytest.mark.anyio
+async def test_stream_chat_completion_translates_request_errors(monkeypatch) -> None:
+    original_async_client = httpx.AsyncClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("network unavailable", request=request)
+
+    def async_client_with_mock_transport(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(settings, "deepseek_api_key", "test-key")
+    monkeypatch.setattr("app.deepseek.httpx.AsyncClient", async_client_with_mock_transport)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"^DeepSeek request failed before streaming completed\.$",
+    ):
+        async for _chunk in stream_chat_completion([{"role": "user", "content": "ping"}]):
+            pass
 
 
 def test_chat_rejects_empty_message_history(chat_client) -> None:
