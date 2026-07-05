@@ -25,7 +25,10 @@ from app.routes.frontend import FRONTEND_ASSETS_DIR, router as frontend_router
 
 
 def login(client) -> str:
-    response = client.post("/api/auth/login", json={"password": "change-me"})
+    response = client.post(
+        "/api/auth/login",
+        json={"password": settings.app_access_password},
+    )
     assert response.status_code == 200
     return response.cookies[COOKIE_NAME]
 
@@ -371,6 +374,196 @@ def test_chat_forwards_message_history_exactly_as_provided(chat_client, monkeypa
 
     assert response.status_code == 200
     assert response.text == "done"
+
+
+def test_chat_still_accepts_plain_json_without_files(chat_client, monkeypatch) -> None:
+    login(chat_client)
+
+    async def fake_stream_chat_completion(messages):
+        assert messages == [{"role": "user", "content": "plain"}]
+        yield "plain-ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "plain"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.text == "plain-ok"
+
+
+def test_chat_rejects_malformed_json_body_with_controlled_error(chat_client) -> None:
+    login(chat_client)
+
+    response = chat_client.post(
+        "/api/chat",
+        content='{"messages": [',
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Malformed JSON body."}
+
+
+def test_chat_rejects_malformed_multipart_messages_json_with_controlled_error(chat_client) -> None:
+    login(chat_client)
+
+    response = chat_client.post(
+        "/api/chat",
+        data={"messages": '[{"role":"user","content":"broken"}'},
+        files={
+            "files": ("notes.txt", b"alpha file content", "text/plain"),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Malformed JSON body."}
+
+
+def test_chat_accepts_multipart_messages_with_text_attachment(chat_client, monkeypatch) -> None:
+    login(chat_client)
+
+    async def fake_stream_chat_completion(messages):
+        assert len(messages) == 2
+        assert messages[0] == {"role": "system", "content": "System prompt"}
+        assert messages[-1]["role"] == "user"
+        assert messages[-1]["content"].startswith("Please summarize the attachment")
+        assert "[Attached files]" in messages[-1]["content"]
+        assert "notes.txt" in messages[-1]["content"]
+        assert "alpha file content" in messages[-1]["content"]
+        yield "ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        data={
+            "messages": '[{"role":"system","content":"System prompt"},{"role":"user","content":"Please summarize the attachment"}]',
+        },
+        files={
+            "files": ("notes.txt", b"alpha file content", "text/plain"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+def test_chat_includes_pdf_attachment_text_in_last_user_message(chat_client, monkeypatch) -> None:
+    login(chat_client)
+    monkeypatch.setattr("app.attachments.extract_pdf_text", lambda _raw: "pdf body text")
+
+    async def fake_stream_chat_completion(messages):
+        assert "report.pdf" in messages[-1]["content"]
+        assert "pdf body text" in messages[-1]["content"]
+        yield "ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        data={"messages": '[{"role":"user","content":"读取 PDF"}]'},
+        files={"files": ("report.pdf", b"%PDF-fake", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+def test_chat_includes_docx_attachment_text_in_last_user_message(chat_client, monkeypatch) -> None:
+    login(chat_client)
+    monkeypatch.setattr("app.attachments.extract_docx_text", lambda _raw: "docx body text")
+
+    async def fake_stream_chat_completion(messages):
+        assert "doc.docx" in messages[-1]["content"]
+        assert "docx body text" in messages[-1]["content"]
+        yield "ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        data={"messages": '[{"role":"user","content":"读取 DOCX"}]'},
+        files={
+            "files": (
+                "doc.docx",
+                b"fake-docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+def test_chat_rejects_image_when_ocr_extracts_no_text(chat_client, monkeypatch) -> None:
+    login(chat_client)
+    monkeypatch.setattr("app.attachments.extract_image_text", lambda _raw: "")
+
+    response = chat_client.post(
+        "/api/chat",
+        data={"messages": '[{"role":"user","content":"读取图片"}]'},
+        files={"files": ("shot.png", b"fake-image", "image/png")},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "No readable text could be extracted from image: shot.png"
+    }
+
+
+def test_chat_rejects_unsupported_attachment_extension(chat_client) -> None:
+    login(chat_client)
+
+    response = chat_client.post(
+        "/api/chat",
+        data={
+            "messages": '[{"role":"user","content":"请读取附件"}]',
+        },
+        files={
+            "files": ("archive.zip", b"PK", "application/zip"),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Unsupported file type: archive.zip"}
+
+
+def test_chat_rejects_more_than_five_files(chat_client) -> None:
+    login(chat_client)
+
+    files = [
+        ("files", (f"file-{index}.txt", b"x", "text/plain"))
+        for index in range(6)
+    ]
+
+    response = chat_client.post(
+        "/api/chat",
+        data={
+            "messages": '[{"role":"user","content":"too many"}]',
+        },
+        files=files,
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "Too many files. Maximum 5 files are allowed per request."
+    }
 
 
 def test_chat_surfaces_upstream_errors_for_authenticated_session(chat_client, monkeypatch) -> None:

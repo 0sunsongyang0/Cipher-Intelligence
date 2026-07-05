@@ -46,6 +46,14 @@ export type OutboundChatMessage = {
   content: string;
 };
 
+export type StagedAttachment = {
+  id: string;
+  file: File;
+  name: string;
+  type: string;
+  size: number;
+};
+
 export type WebLlmInitProgress = {
   progress: number;
   text: string;

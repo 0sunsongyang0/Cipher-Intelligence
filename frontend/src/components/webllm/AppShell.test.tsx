@@ -1,9 +1,12 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import { AppShell } from "./AppShell";
 import * as useServerChatModule from "../../hooks/useServerChat";
-import type { LocalConversation } from "../../types";
+import type { LocalConversation, StagedAttachment } from "../../types";
+
+type MockServerChatState = ReturnType<typeof useServerChatModule.useServerChat>;
 
 vi.mock("../../hooks/useServerChat", () => ({
   useServerChat: vi.fn()
@@ -12,42 +15,74 @@ vi.mock("../../hooks/useServerChat", () => ({
 function buildConversation(): LocalConversation {
   return {
     id: "conversation-1",
-    title: "Campus deployment",
+    title: "Campus rollout plan",
     createdAt: "2026-07-03T10:00:00.000Z",
     updatedAt: "2026-07-03T10:00:00.000Z",
     messages: [
       {
         id: "message-1",
         role: "user",
-        content: "How is the campus assistant doing?",
+        content: "What is the current status?",
         createdAt: "2026-07-03T10:00:00.000Z"
       },
       {
         id: "message-2",
         role: "assistant",
-        content: "The DeepSeek campus assistant is ready.",
+        content: "The backend is connected and ready.",
         createdAt: "2026-07-03T10:00:01.000Z"
       }
     ]
   };
 }
 
+function buildAttachment(overrides: Partial<StagedAttachment> = {}): StagedAttachment {
+  const file = overrides.file ?? new File(["attachment body"], "campus-notes.pdf", {
+    type: "application/pdf"
+  });
+
+  return {
+    id: overrides.id ?? "attachment-1",
+    file,
+    name: overrides.name ?? file.name,
+    type: overrides.type ?? "PDF",
+    size: overrides.size ?? file.size
+  };
+}
+
+function expectReadableMath(minCount = 1) {
+  expect(document.querySelectorAll("mjx-container").length).toBeGreaterThanOrEqual(minCount);
+  expect(document.querySelectorAll('[data-mml-node="merror"]')).toHaveLength(0);
+  expect(document.body.textContent).not.toContain("\\(");
+  expect(document.body.textContent).not.toContain("\\[");
+  expect(document.body.textContent).not.toContain("\\sum");
+  expect(document.body.textContent).not.toContain("\\frac");
+}
+
 describe("AppShell", () => {
   const onLogout = vi.fn().mockResolvedValue(undefined);
   const sendMessage = vi.fn().mockResolvedValue(undefined);
   const setActiveConversationId = vi.fn();
+  const deleteConversation = vi.fn();
+  const addFiles = vi.fn();
+  const clearFiles = vi.fn();
+  const removeFile = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
       activeConversation: buildConversation(),
       activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
       conversations: [buildConversation()],
+      deleteConversation,
       error: null,
       isGenerating: false,
+      removeFile,
       runtimeStatus: "ready",
       sendMessage,
       setActiveConversationId,
+      stagedFiles: [],
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
         systemPrompt: "You are a helpful assistant."
@@ -55,103 +90,401 @@ describe("AppShell", () => {
     });
   });
 
-  it("renders the campus backend shell sections without starting a client runtime", () => {
+  it("renders the shell layout with chat content", () => {
     render(<AppShell onLogout={onLogout} />);
 
-    expect(screen.getByRole("heading", { name: "DeepSeek campus chat" })).toBeInTheDocument();
-    expect(screen.getByText(/shared campus backend/i)).toBeInTheDocument();
+    expect(screen.getByTestId("aurora-background")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-shell")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-input-dock")).toBeInTheDocument();
+    expect(screen.getByText("deepseek-v4-flash")).toBeInTheDocument();
+    expect(screen.getByText("Bomb AI")).toBeInTheDocument();
+    expect(screen.getByText("Designer.Dev")).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Conversations" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Runtime" })).toBeInTheDocument();
-    expect(screen.getByRole("log", { name: "Messages" })).toBeInTheDocument();
-    expect(screen.getByRole("form", { name: "Prompt composer" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
-  });
-
-  it("switches conversations from the sidebar", async () => {
-    const user = userEvent.setup();
-
-    render(<AppShell onLogout={onLogout} />);
-
-    await user.click(screen.getByRole("button", { name: /Campus deployment/i }));
-
-    expect(setActiveConversationId).toHaveBeenCalledWith("conversation-1");
+    expect(screen.getByRole("log")).toBeInTheDocument();
+    expect(screen.getByText("Campus rollout plan")).toBeInTheDocument();
   });
 
   it("submits a prompt through the composer", async () => {
     const user = userEvent.setup();
-
     render(<AppShell onLogout={onLogout} />);
 
-    await user.type(screen.getByLabelText("Message"), "Explain the campus deployment");
-    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByRole("textbox"), "Explain the rollout plan.");
+    await user.click(within(screen.getByTestId("chat-input-dock")).getAllByRole("button").at(-1)!);
 
     await waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith("Explain the campus deployment");
+      expect(sendMessage).toHaveBeenCalledWith("Explain the rollout plan.");
     });
   });
 
-  it("exposes a logout action and labels settings as read-only", async () => {
+  it("opens the hidden file picker from the paperclip control and stages uploaded files", async () => {
+    const user = userEvent.setup();
+    const clickSpy = vi.spyOn(HTMLInputElement.prototype, "click");
+    render(<AppShell onLogout={onLogout} />);
+
+    await user.click(within(screen.getByTestId("chat-input-dock")).getAllByRole("button")[0]);
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+
+    const file = new File(["semester plan"], "semester-plan.pdf", { type: "application/pdf" });
+    await user.upload(input!, file);
+
+    expect(addFiles).toHaveBeenCalledWith([file]);
+  });
+
+  it("renders staged attachments above the composer and removes them from the chip action", async () => {
     const user = userEvent.setup();
 
-    render(<AppShell onLogout={onLogout} />);
-
-    await user.click(screen.getByRole("button", { name: "Logout" }));
-    expect(onLogout).toHaveBeenCalledTimes(1);
-
-    await user.click(screen.getByRole("button", { name: "Settings" }));
-    expect(screen.getByText("Read-only backend details")).toBeInTheDocument();
-    expect(screen.getByText("DeepSeek campus backend")).toBeInTheDocument();
-    expect(screen.getByText("Backend-configured model")).toBeInTheDocument();
-    expect(screen.queryByText("Llama-3.1-8B-Instruct-q4f32_1-MLC")).not.toBeInTheDocument();
-  });
-
-  it("shows a session error when logout fails", () => {
-    render(<AppShell onLogout={onLogout} sessionError="Logout failed" />);
-
-    expect(screen.getByRole("alert")).toHaveTextContent("Logout failed");
-  });
-
-  it("shows clear streaming state copy while the backend is responding", () => {
     vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
-      activeConversation: null,
-      activeConversationId: null,
-      conversations: [],
+      activeConversation: buildConversation(),
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
       error: null,
-      isGenerating: true,
-      runtimeStatus: "loading",
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
       sendMessage,
       setActiveConversationId,
+      stagedFiles: [buildAttachment({ name: "campus-notes.pdf" })],
       settings: {
+        modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
         systemPrompt: "You are a helpful assistant."
       }
     });
 
     render(<AppShell onLogout={onLogout} />);
 
-    expect(screen.getByRole("heading", { name: "Backend responding" })).toBeInTheDocument();
-    expect(screen.getByText(/DeepSeek is streaming a response/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Backend responding" })).toBeDisabled();
+    const stagedList = document.querySelector(".bomb-shell__attachment-list");
+    expect(stagedList).not.toBeNull();
+    expect(within(stagedList as HTMLElement).getByText("campus-notes.pdf")).toBeInTheDocument();
+
+    await user.click(within(stagedList as HTMLElement).getByRole("button"));
+
+    expect(removeFile).toHaveBeenCalledWith("attachment-1");
   });
 
-  it("shows clear recovery copy when the backend fails", () => {
-    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
-      activeConversation: null,
-      activeConversationId: null,
-      conversations: [],
-      error: "Campus backend unavailable",
+  it("shows a drag overlay over the main chat region and stages dropped files there", () => {
+    render(<AppShell onLogout={onLogout} />);
+
+    const messageStage = screen.getByRole("log");
+    const file = new File(["drop"], "dropped.txt", { type: "text/plain" });
+    const dataTransfer = {
+      files: [file],
+      items: [],
+      types: ["Files"]
+    };
+
+    fireEvent.dragEnter(messageStage, { dataTransfer });
+
+    expect(document.querySelector(".bomb-shell__drop-overlay")).not.toBeNull();
+
+    fireEvent.drop(messageStage, { dataTransfer });
+
+    expect(addFiles).toHaveBeenCalledWith([file]);
+    expect(document.querySelector(".bomb-shell__drop-overlay")).toBeNull();
+  });
+
+  it("does not treat the sidebar or drawer sidebar as drop targets", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    const file = new File(["drop"], "ignored.txt", { type: "text/plain" });
+    const dataTransfer = {
+      files: [file],
+      items: [],
+      types: ["Files"]
+    };
+
+    fireEvent.dragEnter(screen.getByRole("complementary", { name: "Conversations" }), {
+      dataTransfer
+    });
+
+    expect(document.querySelector(".bomb-shell__drop-overlay")).toBeNull();
+    expect(addFiles).not.toHaveBeenCalled();
+
+    await user.click(within(screen.getByRole("banner")).getAllByRole("button")[0]);
+    await user.click(within(screen.getByRole("banner")).getAllByRole("button")[0]);
+
+    const drawerSidebar = screen.getAllByRole("complementary").find((element) =>
+      element.className.includes("bomb-shell__drawer-sidebar")
+    );
+
+    expect(drawerSidebar).toBeTruthy();
+
+    fireEvent.dragEnter(drawerSidebar!, { dataTransfer });
+    fireEvent.drop(drawerSidebar!, { dataTransfer });
+
+    expect(document.querySelector(".bomb-shell__drop-overlay")).toBeNull();
+    expect(addFiles).not.toHaveBeenCalled();
+  });
+
+  it("returns to the centered empty-state landing when starting a new conversation from an existing thread", async () => {
+    const user = userEvent.setup();
+    const populatedHookState: MockServerChatState = {
+      activeConversation: buildConversation(),
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
       isGenerating: false,
-      runtimeStatus: "error",
+      removeFile,
+      runtimeStatus: "ready" as const,
       sendMessage,
       setActiveConversationId,
+      stagedFiles: [],
       settings: {
+        modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
+        systemPrompt: "You are a helpful assistant."
+      }
+    };
+    const emptyHookState: MockServerChatState = {
+      ...populatedHookState,
+      activeConversation: null,
+      activeConversationId: null
+    };
+    let currentHookState = populatedHookState;
+    vi.mocked(useServerChatModule.useServerChat).mockImplementation(() => currentHookState);
+
+    const { rerender } = render(<AppShell onLogout={onLogout} />);
+    const logBeforeReset = screen.getByRole("log");
+    Object.defineProperty(logBeforeReset, "scrollHeight", { configurable: true, value: 2400 });
+    Object.defineProperty(logBeforeReset, "clientHeight", { configurable: true, value: 900 });
+    logBeforeReset.scrollTop = 1480;
+
+    await user.click(screen.getByRole("button", { name: "展开会话栏" }));
+    await user.click(screen.getByRole("button", { name: /开启新对话/ }));
+
+    expect(clearFiles).toHaveBeenCalled();
+    expect(setActiveConversationId).toHaveBeenCalledWith(null);
+
+    currentHookState = emptyHookState;
+    rerender(<AppShell onLogout={onLogout} />);
+
+    const log = screen.getByRole("log");
+    expect(log.className).toContain("bomb-shell__message-stage--empty");
+    expect(log.scrollTop).toBe(0);
+    expect(document.querySelector(".bomb-shell__landing")).not.toBeNull();
+    expect(document.querySelector(".bomb-shell__dock-wrap--centered")).not.toBeNull();
+    expect(screen.getByText("需要我为你做些什么？")).toBeInTheDocument();
+    expect(document.querySelector(".bomb-shell__dock-wrap:not(.bomb-shell__dock-wrap--centered)")).toBeNull();
+  });
+
+  it("renders assistant latex content through a rich renderer", () => {
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        messages: [
+          {
+            id: "message-1",
+            role: "assistant",
+            content: "Inline formula $E=mc^2$\\n\\n$$\\\\int_0^1 x^2 \\\\, dx$$",
+            createdAt: "2026-07-03T10:00:01.000Z"
+          }
+        ]
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setActiveConversationId,
+      stagedFiles: [],
+      settings: {
+        modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
         systemPrompt: "You are a helpful assistant."
       }
     });
 
     render(<AppShell onLogout={onLogout} />);
 
-    expect(screen.getByText("Backend needs attention")).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent("Campus backend unavailable");
-    expect(screen.getByRole("button", { name: "Backend unavailable" })).toBeDisabled();
+    expect(screen.getByText((content) => content.includes("Inline formula"))).toBeInTheDocument();
+    expect(screen.queryByText("Inline formula $E=mc^2$")).not.toBeInTheDocument();
+    expectReadableMath(2);
+  });
+
+  it("renders parenthesized latex-style math often returned in chinese answers", () => {
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        messages: [
+          {
+            id: "message-1",
+            role: "assistant",
+            content:
+              "对于基波周期 ( T = \\pi/7 ) 的信号，其基波频率为 (\\omega_0 = 2\\pi/T = 14 , \\text{rad/s})。\n\n由于输出 ( y(t) = x(t) )，说明输入信号的所有频率分量均通过了系统。",
+            createdAt: "2026-07-03T10:00:01.000Z"
+          }
+        ]
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setActiveConversationId,
+      stagedFiles: [],
+      settings: {
+        modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    expect(screen.getByText((content) => content.includes("对于基波周期"))).toBeInTheDocument();
+    expectReadableMath(3);
+  });
+
+  it("renders standard mathjax inline delimiters", () => {
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        messages: [
+          {
+            id: "message-1",
+            role: "assistant",
+            content: "基波周期为 \\( T = \\pi/7 \\)，频率为 \\( \\omega_0 = 14 \\)。",
+            createdAt: "2026-07-03T10:00:01.000Z"
+          }
+        ]
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setActiveConversationId,
+      stagedFiles: [],
+      settings: {
+        modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    expect(screen.getByText((content) => content.includes("基波周期为"))).toBeInTheDocument();
+    expectReadableMath(2);
+  });
+  it("renders bare multiline latex blocks and standalone equations from model answers", () => {
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        messages: [
+          {
+            id: "message-1",
+            role: "assistant",
+            content: `解答：
+
+系统频率响应应为
+H(j\\omega)=\\begin{cases}
+1, & |\\omega| \\geq 250 \\\\
+0, & \\text{其他}
+\\end{cases}
+
+输入信号 x(t) 的基波周期 T = \\pi/7，故基波角频率
+\\omega_0 = \\frac{2\\pi}{T} = 14 \\text{ rad/s}.
+
+周期信号 x(t) 可表示为傅里叶级数
+x(t)=\\sum_{k=-\\infty}^{\\infty} c_k e^{jk\\omega_0 t}
+
+通过系统后输出
+y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
+            createdAt: "2026-07-03T10:00:01.000Z"
+          }
+        ]
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setActiveConversationId,
+      stagedFiles: [],
+      settings: {
+        modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    expect(screen.getByText("解答：")).toBeInTheDocument();
+    expectReadableMath(3);
+  });
+
+  it("renders latex lines that include chinese text blocks and malformed escaped dollar delimiters", () => {
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        messages: [
+          {
+            id: "message-1",
+            role: "assistant",
+            content: `第三步：利用积分条件确定 a 和 b
+
+- 区间 [-0.5, 0.5]：仅有 t = 0 处的冲激（n = 0，偶），故
+\\int_{-0.5}^{0.5} x(t) \\, dt = 1.5(a+b) = 1 \\quad \\Rightarrow \\quad a+b = \\frac{2}{3}. \\tag{1}
+
+- 区间 [0, 2]：包含 $t=0$（偶）和 $t=1.5$（奇），故
+\\int_{0}^{2} x(t) \\, dt = 1.5(a+b) + 1.5(a-b) = 3a = 2 \\quad \\Rightarrow \\quad a = \\frac{2}{3}. \\tag{2}
+
+代入 (1) 得 \\$b = 0$。
+
+最终答案为：
+\\boxed{C_k = \\begin{cases} \\frac{2}{3}, & k \\text{为偶数} \\\\ 0, & k \\text{为奇数} \\end{cases}}`,
+            createdAt: "2026-07-03T10:00:01.000Z"
+          }
+        ]
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setActiveConversationId,
+      stagedFiles: [],
+      settings: {
+        modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    expect(screen.getByText("最终答案为：")).toBeInTheDocument();
+    expectReadableMath(3);
   });
 });

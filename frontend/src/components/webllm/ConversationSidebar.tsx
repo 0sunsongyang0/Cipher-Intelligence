@@ -25,22 +25,24 @@ export function ConversationSidebar({
   onSelectConversation
 }: ConversationSidebarProps) {
   return (
-    <aside className="conversation-sidebar" aria-label="Conversations">
+    <aside className="conversation-sidebar conversation-sidebar--aurora" aria-label="Conversations">
       <div className="conversation-sidebar__header">
         <div>
-          <p className="eyebrow">History</p>
+          <p className="eyebrow">Conversation history</p>
           <h2>Conversations</h2>
         </div>
-        <button className="primary-button" type="button" onClick={onNewConversation} disabled={disabled}>
+        <button className="secondary-button secondary-button--soft" type="button" onClick={onNewConversation} disabled={disabled}>
           New chat
         </button>
       </div>
 
       <div className="conversation-sidebar__body">
         {conversations.length === 0 ? (
-          <p className="empty-copy">
-            Start a new chat to build a local conversation history in this browser.
-          </p>
+          <div className="empty-state">
+            <p className="eyebrow">No saved threads</p>
+            <h3>Start a new chat</h3>
+            <p className="empty-copy">New campus conversations will appear here in this browser.</p>
+          </div>
         ) : (
           <ul className="conversation-list">
             {conversations.map((conversation) => {

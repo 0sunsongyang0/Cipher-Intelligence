@@ -13,13 +13,18 @@ router = APIRouter(tags=["frontend"], include_in_schema=False)
 FRONTEND_DIST_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 FRONTEND_INDEX_PATH = FRONTEND_DIST_DIR / "index.html"
 FRONTEND_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
+SPA_SHELL_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 
 def serve_spa_shell() -> FileResponse:
     if not FRONTEND_INDEX_PATH.is_file():
         raise HTTPException(status_code=503, detail="Frontend build is not available.")
 
-    return FileResponse(FRONTEND_INDEX_PATH)
+    return FileResponse(FRONTEND_INDEX_PATH, headers=SPA_SHELL_HEADERS)
 
 
 def api_not_found() -> None:

@@ -7,18 +7,24 @@ import type {
   LocalConversation,
   OutboundChatMessage,
   PersistedChatState,
-  RuntimeStatus
+  RuntimeStatus,
+  StagedAttachment
 } from "../types";
 
 type UseServerChatResult = {
   activeConversation: LocalConversation | null;
   activeConversationId: string | null;
   conversations: LocalConversation[];
+  clearFiles: () => void;
+  deleteConversation: (conversationId: string) => void;
   error: string | null;
   isGenerating: boolean;
+  addFiles: (files: File[]) => void;
+  removeFile: (attachmentId: string) => void;
   runtimeStatus: RuntimeStatus;
   sendMessage: (content: string) => Promise<void>;
   setActiveConversationId: (conversationId: string | null) => void;
+  stagedFiles: StagedAttachment[];
   settings: PersistedChatState["settings"];
 };
 
@@ -58,6 +64,24 @@ function createMessage(role: LocalChatMessage["role"], content: string): LocalCh
     content,
     createdAt: new Date().toISOString()
   };
+}
+
+function inferAttachmentType(file: File): string {
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+
+  if (extension === "pdf") {
+    return "PDF";
+  }
+
+  if (extension === "docx") {
+    return "DOCX";
+  }
+
+  if (["png", "jpg", "jpeg", "webp", "bmp", "gif"].includes(extension)) {
+    return "Image";
+  }
+
+  return "Text";
 }
 
 function appendMessages(
@@ -106,6 +130,7 @@ export function useServerChat(): UseServerChatResult {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>("ready");
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stagedFiles, setStagedFiles] = useState<StagedAttachment[]>([]);
 
   const chatStateRef = useRef(chatState);
   const generationInFlightRef = useRef(false);
@@ -154,6 +179,10 @@ export function useServerChat(): UseServerChatResult {
     const assistantMessage = createMessage("assistant", "");
     const conversationMessages = [...targetConversation.messages, userMessage];
     const nextMessages = [...conversationMessages, assistantMessage];
+    const stagedFilesForRequest = stagedFiles;
+    const filesForRequest = stagedFilesForRequest.map((attachment) => attachment.file);
+
+    setStagedFiles([]);
 
     setChatState((previousState) => {
       const hasConversation = previousState.conversations.some(
@@ -178,7 +207,8 @@ export function useServerChat(): UseServerChatResult {
 
     try {
       const stream = await streamChat(
-        buildOutboundMessages(currentState.settings, conversationMessages)
+        buildOutboundMessages(currentState.settings, conversationMessages),
+        filesForRequest
       );
       const reader = stream.getReader();
       const decoder = new TextDecoder();
@@ -233,6 +263,7 @@ export function useServerChat(): UseServerChatResult {
 
       setRuntimeStatus("ready");
     } catch (nextError) {
+      setStagedFiles((previousFiles) => [...stagedFilesForRequest, ...previousFiles]);
       setRuntimeStatus("error");
       setError(nextError instanceof Error ? nextError.message : "Failed to generate response.");
     } finally {
@@ -244,9 +275,45 @@ export function useServerChat(): UseServerChatResult {
   return {
     activeConversation,
     activeConversationId: chatState.activeConversationId,
+    addFiles(files) {
+      setStagedFiles((previousFiles) => [
+        ...previousFiles,
+        ...files.map((file) => ({
+          id: createId("attachment"),
+          file,
+          name: file.name,
+          type: inferAttachmentType(file),
+          size: file.size
+        }))
+      ]);
+    },
+    clearFiles() {
+      setStagedFiles([]);
+    },
     conversations: chatState.conversations,
+    deleteConversation(conversationId) {
+      setChatState((previousState) => {
+        const nextConversations = previousState.conversations.filter(
+          (conversation) => conversation.id !== conversationId
+        );
+
+        return {
+          ...previousState,
+          activeConversationId:
+            previousState.activeConversationId === conversationId
+              ? null
+              : previousState.activeConversationId,
+          conversations: nextConversations
+        };
+      });
+    },
     error,
     isGenerating,
+    removeFile(attachmentId) {
+      setStagedFiles((previousFiles) =>
+        previousFiles.filter((attachment) => attachment.id !== attachmentId)
+      );
+    },
     runtimeStatus,
     sendMessage,
     setActiveConversationId(conversationId) {
@@ -255,6 +322,7 @@ export function useServerChat(): UseServerChatResult {
         activeConversationId: conversationId
       }));
     },
+    stagedFiles,
     settings: chatState.settings
   };
 }

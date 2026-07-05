@@ -8,39 +8,39 @@ type RuntimePanelProps = {
 function getStatusTitle(runtimeStatus: RuntimePanelProps["runtimeStatus"]): string {
   switch (runtimeStatus) {
     case "loading":
-      return "Backend responding";
+      return "Responding";
     case "ready":
-      return "Backend ready";
+      return "Ready";
     case "error":
-      return "Backend needs attention";
+      return "Needs attention";
     default:
-      return "Backend pending";
+      return "Pending";
   }
 }
 
 function getStatusBody(runtimeStatus: RuntimePanelProps["runtimeStatus"]): string {
   switch (runtimeStatus) {
     case "loading":
-      return "DeepSeek is streaming a response from the shared campus backend.";
+      return "DeepSeek is streaming a response from the shared campus runtime.";
     case "ready":
-      return "The shared backend is available for new DeepSeek prompts.";
+      return "Shared campus runtime is available for new prompts.";
     case "error":
-      return "The campus backend could not complete the last request. Review the error and try another prompt.";
+      return "The campus runtime could not complete the last request. Review the error and try again.";
     default:
-      return "Waiting for the campus chat backend to become available.";
+      return "Waiting for the campus runtime.";
   }
 }
 
 function getActionLabel(runtimeStatus: RuntimePanelProps["runtimeStatus"]): string {
   switch (runtimeStatus) {
     case "loading":
-      return "Backend responding";
+      return "Responding";
     case "error":
-      return "Backend unavailable";
+      return "Unavailable";
     case "ready":
-      return "Backend ready";
+      return "Ready";
     default:
-      return "Backend pending";
+      return "Pending";
   }
 }
 
@@ -65,7 +65,7 @@ export function RuntimePanel({
     <section className="runtime-panel" aria-label="Runtime">
       <div className="runtime-panel__header">
         <div>
-          <p className="eyebrow">Backend</p>
+          <p className="eyebrow">Campus runtime</p>
           <h2>{getStatusTitle(runtimeStatus)}</h2>
         </div>
         <span className={`status-pill${getStatusTone(runtimeStatus)}`}>{runtimeStatus}</span>
@@ -79,9 +79,9 @@ export function RuntimePanel({
         </p>
       ) : null}
 
-      <button className="secondary-button" type="button" disabled>
+      <p className="runtime-panel__status" aria-live="polite">
         {getActionLabel(runtimeStatus)}
-      </button>
+      </p>
     </section>
   );
 }

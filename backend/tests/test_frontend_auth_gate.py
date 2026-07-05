@@ -36,6 +36,7 @@ def test_root_serves_spa_shell_without_auth(frontend_client) -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
+    assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
     assert '<div id="root"></div>' in response.text
 
 
@@ -60,6 +61,7 @@ def test_chat_route_serves_spa_shell_for_authenticated_sessions(frontend_client)
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
+    assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
     assert '<div id="root"></div>' in response.text
 
 

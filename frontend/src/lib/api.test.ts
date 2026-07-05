@@ -52,7 +52,7 @@ describe("api auth helpers", () => {
 });
 
 describe("streamChat", () => {
-  it("posts full message history to the backend chat endpoint", async () => {
+  it("posts full message history as JSON when no files are attached", async () => {
     const body = new ReadableStream<Uint8Array>();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(body, {
@@ -79,7 +79,12 @@ describe("streamChat", () => {
     ];
 
     await expect(api.streamChat(messages)).resolves.toBe(body);
-    expect(fetchSpy).toHaveBeenCalledWith("/api/chat", {
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    const [url, options] = fetchSpy.mock.calls[0] ?? [];
+
+    expect(url).toBe("/api/chat");
+    expect(options).toEqual({
       method: "POST",
       credentials: "include",
       headers: {
@@ -87,6 +92,32 @@ describe("streamChat", () => {
       },
       body: JSON.stringify({ messages })
     });
+  });
+
+  it("posts multipart form data when files are attached", async () => {
+    const body = new ReadableStream<Uint8Array>();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(body, {
+        status: 200
+      })
+    );
+    const messages: OutboundChatMessage[] = [{ role: "user", content: "Summarize this file" }];
+    const file = new File(["report body"], "report.txt", { type: "text/plain" });
+
+    await expect(api.streamChat(messages, [file])).resolves.toBe(body);
+
+    const [url, options] = fetchSpy.mock.calls[0] ?? [];
+
+    expect(url).toBe("/api/chat");
+    expect(options).toMatchObject({
+      method: "POST",
+      credentials: "include"
+    });
+    expect(options?.body).toBeInstanceOf(FormData);
+
+    const formData = options?.body as FormData;
+    expect(formData.get("messages")).toBe(JSON.stringify({ messages }));
+    expect(formData.get("files")).toBe(file);
   });
 
   it("throws backend detail when streaming request fails", async () => {
@@ -104,11 +135,39 @@ describe("streamChat", () => {
     );
   });
 
+  it("surfaces validation messages from structured backend errors", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: [{ msg: "Input should be a valid dictionary or object to extract fields from" }]
+        }),
+        {
+          status: 422,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(api.streamChat([{ role: "user", content: "Hello" }], [new File(["x"], "a.txt")])).rejects.toThrow(
+      "Input should be a valid dictionary or object to extract fields from"
+    );
+  });
+
   it("throws a readable error when the response has no stream body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
 
     await expect(api.streamChat([{ role: "user", content: "Hello" }])).rejects.toThrow(
       "Chat response did not include a readable stream."
+    );
+  });
+
+  it("surfaces a clear error when the backend is unreachable", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(api.streamChat([{ role: "user", content: "Hello" }])).rejects.toThrow(
+      "Unable to reach the server. Please check whether the backend is running and reachable."
     );
   });
 });

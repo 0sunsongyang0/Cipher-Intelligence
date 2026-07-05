@@ -14,10 +14,10 @@ export function ChatViewport({
   const messages = activeConversation?.messages ?? [];
 
   return (
-    <section className="chat-viewport" aria-label="Messages" role="log" aria-live="polite">
+    <section className="chat-viewport chat-viewport--aurora" aria-label="Messages" role="log" aria-live="polite">
       <header className="chat-viewport__header">
         <div>
-          <p className="eyebrow">Conversation</p>
+          <p className="eyebrow">Primary thread</p>
           <h2>{activeConversation?.title ?? "New conversation"}</h2>
         </div>
         <p className="chat-viewport__meta">
@@ -41,19 +41,34 @@ export function ChatViewport({
         </div>
       ) : (
         <ol className="message-thread">
-          {messages.map((message) => (
-            <li
-              key={message.id}
-              className={`message-item message-item--${message.role === "assistant" ? "assistant" : message.role}`}
-            >
-              <article className="message-card">
-                <p className="message-card__role">
-                  {message.role === "user" ? "You" : message.role === "assistant" ? "Assistant" : "System"}
-                </p>
-                <p className="message-card__content">{message.content || "…"}</p>
-              </article>
-            </li>
-          ))}
+          {messages.map((message) => {
+            const roleLabel =
+              message.role === "user" ? "You" : message.role === "assistant" ? "Assistant" : "System";
+
+            return (
+              <li
+                key={message.id}
+                className={`message-item message-item--${message.role === "assistant" ? "assistant" : message.role}`}
+              >
+                {message.role === "assistant" ? (
+                  <div className="message-avatar message-avatar--assistant" aria-hidden="true">
+                    B
+                  </div>
+                ) : null}
+
+                <article className="message-card">
+                  <p className="message-card__role">{roleLabel}</p>
+                  <p className="message-card__content">{message.content || "..."}</p>
+                </article>
+
+                {message.role === "user" ? (
+                  <div className="message-avatar message-avatar--user" aria-hidden="true">
+                    U
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       )}
 

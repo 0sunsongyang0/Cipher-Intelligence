@@ -20,10 +20,10 @@ vi.mock("./components/webllm/AppShell", () => ({
     sessionError?: string | null;
   }) => (
     <div>
-      <h1>DeepSeek Campus App Shell</h1>
+      <h1>兔兔炸弹的大模型助手</h1>
       {sessionError ? <p role="alert">{sessionError}</p> : null}
       <button type="button" onClick={() => void onLogout()}>
-        Logout
+        退出登录
       </button>
     </div>
   )
@@ -50,12 +50,12 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByRole("heading", { name: "Restoring campus chat" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "正在恢复会话" })).toBeInTheDocument();
 
     resolveSession?.(false);
 
     expect(
-      await screen.findByRole("heading", { name: "Enter the campus chat" })
+      await screen.findByRole("heading", { name: "进入聊天界面" })
     ).toBeInTheDocument();
   });
 
@@ -73,11 +73,11 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    await user.type(await screen.findByLabelText("Access passphrase"), "campus-secret");
-    await user.click(screen.getByRole("button", { name: "Open chat" }));
+    await user.type(await screen.findByLabelText("访问密码"), "campus-secret");
+    await user.click(screen.getByRole("button", { name: "进入聊天" }));
 
     expect(login).toHaveBeenCalledWith("campus-secret");
-    expect(await screen.findByRole("heading", { name: "DeepSeek Campus App Shell" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "兔兔炸弹的大模型助手" })).toBeInTheDocument();
   });
 
   it("renders the campus shell for authenticated chat visits", async () => {
@@ -89,7 +89,7 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole("heading", { name: "DeepSeek Campus App Shell" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "兔兔炸弹的大模型助手" })).toBeInTheDocument();
   });
 
   it("logs out from the authenticated shell and returns to login", async () => {
@@ -103,11 +103,11 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    await user.click(await screen.findByRole("button", { name: "Logout" }));
+    await user.click(await screen.findByRole("button", { name: "退出登录" }));
 
     expect(api.logout).toHaveBeenCalledTimes(1);
     expect(
-      await screen.findByRole("heading", { name: "Enter the campus chat" })
+      await screen.findByRole("heading", { name: "进入聊天界面" })
     ).toBeInTheDocument();
   });
 
@@ -122,10 +122,10 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    await user.click(await screen.findByRole("button", { name: "Logout" }));
+    await user.click(await screen.findByRole("button", { name: "退出登录" }));
 
     expect(api.logout).toHaveBeenCalledTimes(1);
-    expect(await screen.findByRole("heading", { name: "DeepSeek Campus App Shell" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "兔兔炸弹的大模型助手" })).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Logout failed");
   });
 });

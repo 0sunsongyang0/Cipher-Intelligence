@@ -1,6 +1,7 @@
+import json
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 
 class LoginRequest(BaseModel):
@@ -39,6 +40,14 @@ class ChatMessageInput(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessageInput]
+
+
+def parse_chat_request_json(raw: str) -> ChatRequest:
+    parsed = json.loads(raw)
+    if isinstance(parsed, list):
+        messages = TypeAdapter(list[ChatMessageInput]).validate_python(parsed)
+        return ChatRequest(messages=messages)
+    return ChatRequest.model_validate(parsed)
 
 
 class MessageItem(BaseModel):

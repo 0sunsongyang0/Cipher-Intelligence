@@ -34,28 +34,38 @@ export function PromptComposer({
   }
 
   return (
-    <form className="prompt-composer" aria-label="Prompt composer" onSubmit={handleSubmit}>
-      <label className="prompt-composer__label" htmlFor="prompt-composer-message">
+    <form className="prompt-composer prompt-composer--aurora" aria-label="Prompt composer" onSubmit={handleSubmit} data-testid="chat-input-dock">
+      <label className="prompt-composer__label sr-only" htmlFor="prompt-composer-message">
         Message
       </label>
-      <textarea
-        className="prompt-composer__input"
-        id="prompt-composer-message"
-        name="message"
-        rows={4}
-        value={content}
-        onChange={(event) => setContent(event.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Ask the campus assistant something..."
-        disabled={disabled}
-      />
+      <div className="prompt-composer__surface">
+        <button className="prompt-composer__tool" type="button" aria-hidden="true" tabIndex={-1}>
+          +
+        </button>
+        <textarea
+          className="prompt-composer__input"
+          id="prompt-composer-message"
+          name="message"
+          rows={1}
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Ask the campus assistant something..."
+          disabled={disabled}
+        />
+        <button
+          className="primary-button primary-button--icon"
+          type="submit"
+          aria-label="Send message"
+          disabled={isSubmitDisabled}
+        >
+          {isGenerating ? "Stop" : "Send"}
+        </button>
+      </div>
       <div className="prompt-composer__footer">
         <p className="prompt-composer__hint">
           Press Enter to send to DeepSeek, Shift+Enter for a new line.
         </p>
-        <button className="primary-button" type="submit" disabled={isSubmitDisabled}>
-          {isGenerating ? "Sending..." : "Send"}
-        </button>
       </div>
     </form>
   );

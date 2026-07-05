@@ -7,3 +7,9 @@ backend/data/
 frontend/node_modules/
 frontend/dist/
 coverage/
+.pytest-tmp/
+backend/.pytest-tmp/
+.superpowers/
+backend/uvicorn-debug.log
+backend/uvicorn-debug.err.log
+work/

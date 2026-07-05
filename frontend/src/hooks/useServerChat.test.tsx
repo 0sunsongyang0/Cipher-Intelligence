@@ -148,24 +148,137 @@ describe("useServerChat", () => {
       await result.current.sendMessage("What now?");
     });
 
-    expect(streamChat).toHaveBeenCalledWith([
-      {
-        role: "system",
-        content: "Be concise"
-      },
-      {
-        role: "user",
-        content: "Hello"
-      },
-      {
-        role: "assistant",
-        content: "Hi"
-      },
-      {
-        role: "user",
-        content: "What now?"
-      }
-    ]);
+    expect(streamChat).toHaveBeenCalledWith(
+      [
+        {
+          role: "system",
+          content: "Be concise"
+        },
+        {
+          role: "user",
+          content: "Hello"
+        },
+        {
+          role: "assistant",
+          content: "Hi"
+        },
+        {
+          role: "user",
+          content: "What now?"
+        }
+      ],
+      []
+    );
+  });
+
+  it("stages files, sends them with the prompt, and clears them when send starts", async () => {
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    let continueStream: (() => void) | undefined;
+    const streamGate = new Promise<void>((resolve) => {
+      continueStream = resolve;
+    });
+    const encoder = new TextEncoder();
+
+    streamChat.mockResolvedValue(
+      new ReadableStream<Uint8Array>({
+        async start(controller) {
+          await streamGate;
+          controller.enqueue(encoder.encode("done"));
+          controller.close();
+        }
+      })
+    );
+
+    const { result } = renderHook(() => useServerChat());
+
+    act(() => {
+      result.current.addFiles([file]);
+    });
+
+    expect(result.current.stagedFiles).toHaveLength(1);
+
+    let sendPromise!: Promise<void>;
+
+    await act(async () => {
+      sendPromise = result.current.sendMessage("read this");
+      await Promise.resolve();
+    });
+
+    expect(streamChat).toHaveBeenCalledWith(
+      [
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: "read this" }
+      ],
+      [file]
+    );
+    expect(result.current.stagedFiles).toHaveLength(0);
+
+    continueStream?.();
+
+    await act(async () => {
+      await sendPromise;
+    });
+  });
+
+  it("removes a staged file by id", () => {
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+
+    const { result } = renderHook(() => useServerChat());
+
+    act(() => {
+      result.current.addFiles([file]);
+    });
+
+    const stagedId = result.current.stagedFiles[0]?.id;
+
+    expect(stagedId).toBeTruthy();
+
+    act(() => {
+      result.current.removeFile(stagedId!);
+    });
+
+    expect(result.current.stagedFiles).toHaveLength(0);
+  });
+
+  it("clears all staged files", () => {
+    const firstFile = new File(["one"], "notes.txt", { type: "text/plain" });
+    const secondFile = new File(["two"], "todo.pdf", { type: "application/pdf" });
+
+    const { result } = renderHook(() => useServerChat());
+
+    act(() => {
+      result.current.addFiles([firstFile, secondFile]);
+    });
+
+    expect(result.current.stagedFiles).toHaveLength(2);
+
+    act(() => {
+      result.current.clearFiles();
+    });
+
+    expect(result.current.stagedFiles).toHaveLength(0);
+  });
+
+  it("keeps staged files available when an attachment send fails immediately", async () => {
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+
+    streamChat.mockRejectedValue(new Error("request failed"));
+
+    const { result } = renderHook(() => useServerChat());
+
+    act(() => {
+      result.current.addFiles([file]);
+    });
+
+    expect(result.current.stagedFiles).toHaveLength(1);
+
+    await act(async () => {
+      await result.current.sendMessage("read this");
+    });
+
+    expect(result.current.error).toBe("request failed");
+    expect(result.current.stagedFiles).toHaveLength(1);
+    expect(result.current.stagedFiles[0]?.file).toBe(file);
   });
 
   it("preserves user message plus partial assistant content when streaming fails", async () => {
@@ -252,5 +365,72 @@ describe("useServerChat", () => {
       message: "Chat generation is already in progress."
     });
     expect(result.current.activeConversation?.messages).toHaveLength(2);
+  });
+
+  it("deletes a non-active conversation without clearing the current one", () => {
+    const savedState: PersistedChatState = {
+      activeConversationId: "conversation-1",
+      conversations: [
+        {
+          id: "conversation-1",
+          title: "Active conversation",
+          createdAt: "2026-07-03T00:00:00.000Z",
+          updatedAt: "2026-07-03T00:01:00.000Z",
+          messages: []
+        },
+        {
+          id: "conversation-2",
+          title: "Other conversation",
+          createdAt: "2026-07-03T00:00:00.000Z",
+          updatedAt: "2026-07-03T00:01:00.000Z",
+          messages: []
+        }
+      ],
+      settings: {
+        systemPrompt: "Be helpful"
+      }
+    };
+
+    saveChatState(savedState);
+
+    const { result } = renderHook(() => useServerChat());
+
+    act(() => {
+      result.current.deleteConversation("conversation-2");
+    });
+
+    expect(result.current.activeConversationId).toBe("conversation-1");
+    expect(result.current.conversations).toHaveLength(1);
+    expect(result.current.conversations[0]?.id).toBe("conversation-1");
+  });
+
+  it("deletes the active conversation and clears the selection", () => {
+    const savedState: PersistedChatState = {
+      activeConversationId: "conversation-1",
+      conversations: [
+        {
+          id: "conversation-1",
+          title: "Active conversation",
+          createdAt: "2026-07-03T00:00:00.000Z",
+          updatedAt: "2026-07-03T00:01:00.000Z",
+          messages: []
+        }
+      ],
+      settings: {
+        systemPrompt: "Be helpful"
+      }
+    };
+
+    saveChatState(savedState);
+
+    const { result } = renderHook(() => useServerChat());
+
+    act(() => {
+      result.current.deleteConversation("conversation-1");
+    });
+
+    expect(result.current.activeConversationId).toBeNull();
+    expect(result.current.activeConversation).toBeNull();
+    expect(result.current.conversations).toHaveLength(0);
   });
 });
