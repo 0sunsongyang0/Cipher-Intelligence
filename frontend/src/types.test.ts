@@ -4,6 +4,7 @@ import {
   DEEPSEEK_MODEL_IDS,
   DEEPSEEK_MODEL_LABELS,
   DEEPSEEK_MODEL_OPTIONS,
+  MODEL_PROVIDER_LABELS,
   MODEL_PROVIDER_ORDER,
   getDeepSeekModelProvider,
   getDeepSeekModelsByProvider
@@ -35,6 +36,22 @@ describe("grouped model metadata", () => {
   it("fails loudly when provider metadata is missing for a model id", () => {
     expect(() => getDeepSeekModelProvider("missing-model-id" as never)).toThrow(
       'Missing provider metadata for model "missing-model-id"'
+    );
+  });
+
+  it("round-trips the provider grouping from the canonical catalog", () => {
+    const derivedProviderLabels = Object.fromEntries(
+      DEEPSEEK_MODEL_OPTIONS.map((model) => [model.provider, model.groupLabel])
+    );
+
+    expect(Object.entries(MODEL_PROVIDER_LABELS)).toEqual(Object.entries(derivedProviderLabels));
+
+    expect(DEEPSEEK_MODEL_OPTIONS.map((model) => getDeepSeekModelProvider(model.id))).toEqual(
+      DEEPSEEK_MODEL_OPTIONS.map((model) => model.provider)
+    );
+
+    expect(MODEL_PROVIDER_ORDER.flatMap((provider) => getDeepSeekModelsByProvider(provider))).toEqual(
+      DEEPSEEK_MODEL_OPTIONS
     );
   });
 

@@ -36,13 +36,14 @@ function getModelLabels<const T extends readonly ModelOptionShape[]>(options: T)
   >;
 }
 
-export const MODEL_PROVIDER_ORDER = ["deepseek", "openai", "claude"] as const;
+function getProviderLabels<const T extends readonly ModelOptionShape[]>(options: T) {
+  return Object.fromEntries(options.map((option) => [option.provider, option.groupLabel])) as Record<
+    T[number]["provider"],
+    string
+  >;
+}
 
-export const MODEL_PROVIDER_LABELS: Record<ModelProvider, string> = {
-  claude: "Claude",
-  deepseek: "DeepSeek",
-  openai: "OpenAI"
-};
+export const MODEL_PROVIDER_ORDER = ["deepseek", "openai", "claude"] as const;
 
 export const DEEPSEEK_MODEL_OPTIONS = [
   { id: "deepseek-v4-flash", label: "deepseek-v4-flash", provider: "deepseek", groupLabel: "DeepSeek" },
@@ -62,6 +63,7 @@ export type DeepSeekModelOption = (typeof DEEPSEEK_MODEL_OPTIONS)[number];
 export const DEFAULT_DEEPSEEK_MODEL_ID: DeepSeekModelId = "deepseek-v4-flash";
 
 export const DEEPSEEK_MODEL_LABELS = getModelLabels(DEEPSEEK_MODEL_OPTIONS);
+export const MODEL_PROVIDER_LABELS = getProviderLabels(DEEPSEEK_MODEL_OPTIONS);
 
 export function isDeepSeekModelId(value: string): value is DeepSeekModelId {
   return (DEEPSEEK_MODEL_IDS as readonly string[]).includes(value);
