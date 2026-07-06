@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEEPSEEK_MODEL_IDS,
+  DEEPSEEK_MODEL_LABELS,
   DEEPSEEK_MODEL_OPTIONS,
   MODEL_PROVIDER_ORDER,
   getDeepSeekModelProvider,
@@ -21,6 +23,19 @@ describe("grouped model metadata", () => {
 
   it("maps chatgpt-5.5-official back to the OpenAI provider", () => {
     expect(getDeepSeekModelProvider("chatgpt-5.5-official")).toBe("openai");
+  });
+
+  it("derives model ids and labels from the provider-aware catalog", () => {
+    expect(DEEPSEEK_MODEL_IDS).toEqual(DEEPSEEK_MODEL_OPTIONS.map((model) => model.id));
+    expect(DEEPSEEK_MODEL_LABELS).toEqual(
+      Object.fromEntries(DEEPSEEK_MODEL_OPTIONS.map((model) => [model.id, model.label]))
+    );
+  });
+
+  it("fails loudly when provider metadata is missing for a model id", () => {
+    expect(() => getDeepSeekModelProvider("missing-model-id" as never)).toThrow(
+      'Missing provider metadata for model "missing-model-id"'
+    );
   });
 
   it("keeps the flattened option order stable for downstream consumers", () => {
