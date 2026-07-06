@@ -47,6 +47,9 @@ const FOCUSABLE_SELECTOR = [
 
 const MODEL_MENU_CLOSE_MS = 220;
 
+type ModelButtonRefMap = Partial<Record<DeepSeekModelId, HTMLButtonElement | null>>;
+type ProviderButtonRefMap = Partial<Record<ModelProvider, HTMLButtonElement | null>>;
+
 function getFocusableElements(container: HTMLElement | null): HTMLElement[] {
   if (!container) {
     return [];
@@ -202,6 +205,8 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const modelMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
+  const modelProviderItemRefs = useRef<ProviderButtonRefMap>({});
+  const modelSubmenuItemRefs = useRef<ModelButtonRefMap>({});
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const messageStageRef = useRef<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -441,6 +446,13 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
   useEffect(() => {
     if (modelMenuOpen) {
       setActiveModelProvider(selectedProvider);
+      const focusFrame = window.requestAnimationFrame(() => {
+        focusProviderItem(selectedProvider);
+      });
+
+      return () => {
+        window.cancelAnimationFrame(focusFrame);
+      };
     }
   }, [modelMenuOpen, selectedProvider]);
 
@@ -571,6 +583,61 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
     }
 
     shouldAutoScrollRef.current = isNearBottom(messageStageRef.current);
+  }
+
+  function focusProviderItem(provider: ModelProvider) {
+    modelProviderItemRefs.current[provider]?.focus();
+  }
+
+  function focusFirstModelForProvider(provider: ModelProvider) {
+    const firstModel = getDeepSeekModelsByProvider(provider)[0];
+
+    if (!firstModel) {
+      return;
+    }
+
+    modelSubmenuItemRefs.current[firstModel.id]?.focus();
+  }
+
+  function handleProviderKeyDown(event: KeyboardEvent<HTMLButtonElement>, provider: ModelProvider) {
+    const providerIndex = MODEL_PROVIDER_ORDER.indexOf(provider);
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      const nextProvider = MODEL_PROVIDER_ORDER[(providerIndex + 1) % MODEL_PROVIDER_ORDER.length];
+      setActiveModelProvider(nextProvider);
+      focusProviderItem(nextProvider);
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      const nextProvider = MODEL_PROVIDER_ORDER[
+        (providerIndex - 1 + MODEL_PROVIDER_ORDER.length) % MODEL_PROVIDER_ORDER.length
+      ];
+      setActiveModelProvider(nextProvider);
+      focusProviderItem(nextProvider);
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setActiveModelProvider(provider);
+      focusFirstModelForProvider(provider);
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setActiveModelProvider(provider);
+    }
+  }
+
+  function handleModelMenuItemKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      focusProviderItem(activeProvider);
+    }
   }
 
   function handleModelSelect(nextModelId: DeepSeekModelId) {
@@ -849,12 +916,17 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
                         key={provider}
                         type="button"
                         role="menuitem"
+                        disabled={!modelMenuOpen}
                         className={`bomb-shell__model-provider-item${
                           isSelected ? " bomb-shell__model-provider-item--selected" : ""
                         }${isActive ? " bomb-shell__model-provider-item--active" : ""}`}
+                        ref={(element) => {
+                          modelProviderItemRefs.current[provider] = element;
+                        }}
                         onMouseEnter={() => setActiveModelProvider(provider)}
                         onFocus={() => setActiveModelProvider(provider)}
                         onClick={() => setActiveModelProvider(provider)}
+                        onKeyDown={(event) => handleProviderKeyDown(event, provider)}
                       >
                         {MODEL_PROVIDER_LABELS[provider]}
                       </button>
@@ -871,11 +943,16 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
                         key={option.id}
                         type="button"
                         role="menuitemradio"
+                        disabled={!modelMenuOpen}
                         className={`bomb-shell__model-menu-item${
                           isSelected ? " bomb-shell__model-menu-item--selected" : ""
                         }`}
                         aria-checked={isSelected}
+                        ref={(element) => {
+                          modelSubmenuItemRefs.current[option.id] = element;
+                        }}
                         onClick={() => handleModelSelect(option.id)}
+                        onKeyDown={handleModelMenuItemKeyDown}
                       >
                         <span>{option.label}</span>
                         <span className="bomb-shell__model-menu-check" aria-hidden="true">

@@ -176,6 +176,48 @@ describe("AppShell", () => {
     );
   });
 
+  it("moves focus into the active provider and supports keyboard navigation between menu levels", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    await user.click(getModelMenuButton());
+
+    const deepSeekProvider = screen.getByRole("menuitem", { name: "DeepSeek" });
+    await waitFor(() => {
+      expect(deepSeekProvider).toHaveFocus();
+    });
+
+    fireEvent.keyDown(deepSeekProvider, { key: "ArrowDown" });
+    const openAiProvider = screen.getByRole("menuitem", { name: "OpenAI" });
+    expect(openAiProvider).toHaveFocus();
+
+    fireEvent.keyDown(openAiProvider, { key: "Enter" });
+    fireEvent.keyDown(openAiProvider, { key: "ArrowRight" });
+
+    const firstOpenAiModel = screen.getByRole("menuitemradio", { name: "ChatGPT 5.5" });
+    expect(firstOpenAiModel).toHaveFocus();
+
+    fireEvent.keyDown(firstOpenAiModel, { key: "ArrowLeft" });
+    expect(openAiProvider).toHaveFocus();
+  });
+
+  it("closes the menu on escape and returns focus to the trigger", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    const trigger = getModelMenuButton();
+    await user.click(trigger);
+
+    await waitFor(() => {
+      expect(screen.getByRole("menuitem", { name: "DeepSeek" })).toHaveFocus();
+    });
+
+    await user.keyboard("{Escape}");
+
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("keeps the model menu mounted briefly while it animates closed", () => {
     vi.useFakeTimers();
 
@@ -190,6 +232,9 @@ describe("AppShell", () => {
       const closingMenu = document.querySelector(".bomb-shell__model-menu");
       expect(closingMenu).not.toBeNull();
       expect(closingMenu?.className).toContain("bomb-shell__model-menu--closing");
+      expect(
+        Array.from((closingMenu as HTMLElement).querySelectorAll("button")).every((item) => item.hasAttribute("disabled"))
+      ).toBe(true);
 
       act(() => {
         vi.advanceTimersByTime(240);
