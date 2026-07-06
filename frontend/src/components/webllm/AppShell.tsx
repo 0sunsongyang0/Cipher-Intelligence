@@ -2,6 +2,7 @@
 import {
   IconArrowUp,
   IconBomb,
+  IconCheck,
   IconChevronDown,
   IconExternalLink,
   IconLayoutSidebarLeftCollapse,
@@ -14,7 +15,17 @@ import {
   IconX
 } from "@tabler/icons-react";
 
-import type { RuntimeStatus } from "../../types";
+import {
+  MODEL_PROVIDER_LABELS,
+  MODEL_PROVIDER_ORDER,
+  getDeepSeekModelLabel,
+  getDeepSeekModelProvider,
+  getDeepSeekModelsByProvider,
+  resolveDeepSeekModelId,
+  type DeepSeekModelId,
+  type ModelProvider,
+  type RuntimeStatus
+} from "../../types";
 import { useServerChat } from "../../hooks/useServerChat";
 import { AuroraBackground } from "../AuroraBackground";
 import { MessageContent } from "./MessageContent";
@@ -25,8 +36,6 @@ type AppShellProps = {
   sessionError?: string | null;
 };
 
-const BACKEND_MODEL_LABEL = "deepseek-v4-flash";
-
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "[href]",
@@ -35,6 +44,8 @@ const FOCUSABLE_SELECTOR = [
   "textarea:not([disabled])",
   '[tabindex]:not([tabindex="-1"])'
 ].join(", ");
+
+const MODEL_MENU_CLOSE_MS = 220;
 
 function getFocusableElements(container: HTMLElement | null): HTMLElement[] {
   if (!container) {
@@ -175,6 +186,9 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMounted, setDrawerMounted] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelMenuMounted, setModelMenuMounted] = useState(false);
+  const [modelMenuVisible, setModelMenuVisible] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [contextMenuState, setContextMenuState] = useState<{
@@ -186,6 +200,8 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
   const conversationsButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawerPanelRef = useRef<HTMLDivElement | null>(null);
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const modelMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const messageStageRef = useRef<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -196,6 +212,7 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
   const shouldAutoScrollRef = useRef(true);
   const dragDepthRef = useRef(0);
   const drawerOpenFrameRef = useRef<number | null>(null);
+  const modelMenuOpenFrameRef = useRef<number | null>(null);
   const previousMessageCountRef = useRef(0);
 
   const {
@@ -211,15 +228,23 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
     runtimeStatus,
     sendMessage,
     setActiveConversationId,
+    setModelId,
     stagedFiles,
     settings
   } = useServerChat();
+  const [activeModelProvider, setActiveModelProvider] = useState<ModelProvider>(() =>
+    getDeepSeekModelProvider(resolveDeepSeekModelId(settings.modelId))
+  );
 
   const shellStatus = useMemo(
     () => buildShellStatus(runtimeStatus, isGenerating),
     [runtimeStatus, isGenerating]
   );
-  const modelLabel = BACKEND_MODEL_LABEL;
+  const modelId = resolveDeepSeekModelId(settings.modelId);
+  const modelLabel = getDeepSeekModelLabel(modelId);
+  const selectedProvider = getDeepSeekModelProvider(modelId);
+  const activeProvider = activeModelProvider ?? selectedProvider;
+  const activeProviderModels = getDeepSeekModelsByProvider(activeProvider);
 
   const messages = activeConversation?.messages ?? [];
   const activeError = sessionError ?? error;
@@ -343,6 +368,81 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
       window.removeEventListener("scroll", handleScroll, true);
     };
   }, [contextMenuState]);
+
+  useEffect(() => {
+    if (modelMenuOpen) {
+      setModelMenuMounted(true);
+      modelMenuOpenFrameRef.current = window.requestAnimationFrame(() => {
+        modelMenuOpenFrameRef.current = window.requestAnimationFrame(() => {
+          setModelMenuVisible(true);
+          modelMenuOpenFrameRef.current = null;
+        });
+      });
+
+      return () => {
+        if (modelMenuOpenFrameRef.current !== null) {
+          window.cancelAnimationFrame(modelMenuOpenFrameRef.current);
+          modelMenuOpenFrameRef.current = null;
+        }
+      };
+    }
+
+    setModelMenuVisible(false);
+
+    const closeTimer = window.setTimeout(() => {
+      setModelMenuMounted(false);
+    }, MODEL_MENU_CLOSE_MS);
+
+    return () => {
+      window.clearTimeout(closeTimer);
+    };
+  }, [modelMenuOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (modelMenuOpenFrameRef.current !== null) {
+        window.cancelAnimationFrame(modelMenuOpenFrameRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!modelMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (
+        modelMenuRef.current?.contains(event.target as Node) ||
+        modelMenuButtonRef.current?.contains(event.target as Node)
+      ) {
+        return;
+      }
+
+      setModelMenuOpen(false);
+    }
+
+    function handleEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setModelMenuOpen(false);
+        modelMenuButtonRef.current?.focus();
+      }
+    }
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [modelMenuOpen]);
+
+  useEffect(() => {
+    if (modelMenuOpen) {
+      setActiveModelProvider(selectedProvider);
+    }
+  }, [modelMenuOpen, selectedProvider]);
 
   async function handleSend() {
     if (!draft.trim() || isGenerating) {
@@ -471,6 +571,11 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
     }
 
     shouldAutoScrollRef.current = isNearBottom(messageStageRef.current);
+  }
+
+  function handleModelSelect(nextModelId: DeepSeekModelId) {
+    setModelId(nextModelId);
+    setModelMenuOpen(false);
   }
 
   function renderSidebarContent() {
@@ -706,10 +811,81 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
               <IconLayoutSidebarLeftExpand size={18} stroke={1.8} aria-hidden="true" />
             </button>
 
-            <div className="bomb-shell__model-pill" role="button" tabIndex={0} aria-label="切换模型">
+            <button
+              ref={modelMenuButtonRef}
+              type="button"
+              className={`bomb-shell__model-pill${modelMenuOpen ? " bomb-shell__model-pill--open" : ""}`}
+              aria-label="切换模型"
+              aria-haspopup="menu"
+              aria-expanded={modelMenuOpen}
+              onClick={() => setModelMenuOpen((previousState) => !previousState)}
+            >
               <span>{modelLabel}</span>
-              <IconChevronDown size={14} stroke={1.8} aria-hidden="true" />
-            </div>
+              <IconChevronDown
+                className={`bomb-shell__model-pill-chevron${modelMenuOpen ? " bomb-shell__model-pill-chevron--open" : ""}`}
+                size={14}
+                stroke={1.8}
+                aria-hidden="true"
+              />
+            </button>
+
+            {modelMenuMounted ? (
+              <div
+                ref={modelMenuRef}
+                className={`bomb-shell__model-menu${
+                  modelMenuVisible ? " bomb-shell__model-menu--open" : " bomb-shell__model-menu--closing"
+                }`}
+                role="menu"
+                aria-label="模型列表"
+                aria-hidden={modelMenuOpen ? undefined : "true"}
+              >
+                <div className="bomb-shell__model-provider-list">
+                  {MODEL_PROVIDER_ORDER.map((provider) => {
+                    const isSelected = provider === selectedProvider;
+                    const isActive = provider === activeProvider;
+
+                    return (
+                      <button
+                        key={provider}
+                        type="button"
+                        className={`bomb-shell__model-provider-item${
+                          isSelected ? " bomb-shell__model-provider-item--selected" : ""
+                        }${isActive ? " bomb-shell__model-provider-item--active" : ""}`}
+                        onMouseEnter={() => setActiveModelProvider(provider)}
+                        onFocus={() => setActiveModelProvider(provider)}
+                        onClick={() => setActiveModelProvider(provider)}
+                      >
+                        {MODEL_PROVIDER_LABELS[provider]}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="bomb-shell__model-submenu">
+                  {activeProviderModels.map((option) => {
+                    const isSelected = option.id === modelId;
+
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="menuitemradio"
+                        className={`bomb-shell__model-menu-item${
+                          isSelected ? " bomb-shell__model-menu-item--selected" : ""
+                        }`}
+                        aria-checked={isSelected}
+                        onClick={() => handleModelSelect(option.id)}
+                      >
+                        <span>{option.label}</span>
+                        <span className="bomb-shell__model-menu-check" aria-hidden="true">
+                          {isSelected ? <IconCheck size={14} stroke={2.2} /> : null}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
             <div className="bomb-shell__header-actions">
               <button

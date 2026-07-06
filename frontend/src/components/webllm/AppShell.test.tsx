@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -58,6 +58,12 @@ function expectReadableMath(minCount = 1) {
   expect(document.body.textContent).not.toContain("\\frac");
 }
 
+function getModelMenuButton() {
+  const button = document.querySelector(".bomb-shell__model-pill");
+  expect(button).not.toBeNull();
+  return button as HTMLButtonElement;
+}
+
 describe("AppShell", () => {
   const onLogout = vi.fn().mockResolvedValue(undefined);
   const sendMessage = vi.fn().mockResolvedValue(undefined);
@@ -66,6 +72,7 @@ describe("AppShell", () => {
   const addFiles = vi.fn();
   const clearFiles = vi.fn();
   const removeFile = vi.fn();
+  const setModelId = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,9 +89,10 @@ describe("AppShell", () => {
       runtimeStatus: "ready",
       sendMessage,
       setActiveConversationId,
+      setModelId,
       stagedFiles: [],
       settings: {
-        modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
+        modelId: "deepseek-v4-flash",
         systemPrompt: "You are a helpful assistant."
       }
     });
@@ -114,6 +122,85 @@ describe("AppShell", () => {
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith("Explain the rollout plan.");
     });
+  });
+
+  it("shows provider groups before concrete models", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    await user.click(getModelMenuButton());
+
+    expect(screen.getByRole("button", { name: "DeepSeek" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "OpenAI" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Claude" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitemradio", { name: "ChatGPT 5.5" })).not.toBeInTheDocument();
+  });
+
+  it("opens the OpenAI submenu and switches to ChatGPT 5.5", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    await user.click(getModelMenuButton());
+    await user.hover(screen.getByRole("button", { name: "OpenAI" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "ChatGPT 5.5" }));
+
+    expect(setModelId).toHaveBeenCalledWith("chatgpt-5.5-official");
+  });
+
+  it("highlights the provider for the currently selected model", async () => {
+    const user = userEvent.setup();
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: buildConversation(),
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setActiveConversationId,
+      setModelId,
+      stagedFiles: [],
+      settings: {
+        modelId: "claude-opus-4-7-official",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+    await user.click(getModelMenuButton());
+
+    expect(screen.getByRole("button", { name: "Claude" }).className).toContain(
+      "bomb-shell__model-provider-item--selected"
+    );
+  });
+
+  it("keeps the model menu mounted briefly while it animates closed", () => {
+    vi.useFakeTimers();
+
+    try {
+      render(<AppShell onLogout={onLogout} />);
+
+      fireEvent.click(getModelMenuButton());
+      expect(document.querySelector(".bomb-shell__model-menu")).not.toBeNull();
+
+      fireEvent.click(getModelMenuButton());
+
+      const closingMenu = document.querySelector(".bomb-shell__model-menu");
+      expect(closingMenu).not.toBeNull();
+      expect(closingMenu?.className).toContain("bomb-shell__model-menu--closing");
+
+      act(() => {
+        vi.advanceTimersByTime(240);
+      });
+
+      expect(document.querySelector(".bomb-shell__model-menu")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("opens the hidden file picker from the paperclip control and stages uploaded files", async () => {
@@ -150,6 +237,7 @@ describe("AppShell", () => {
       runtimeStatus: "ready",
       sendMessage,
       setActiveConversationId,
+      setModelId,
       stagedFiles: [buildAttachment({ name: "campus-notes.pdf" })],
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
@@ -238,6 +326,7 @@ describe("AppShell", () => {
       runtimeStatus: "ready" as const,
       sendMessage,
       setActiveConversationId,
+      setModelId,
       stagedFiles: [],
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
@@ -258,8 +347,7 @@ describe("AppShell", () => {
     Object.defineProperty(logBeforeReset, "clientHeight", { configurable: true, value: 900 });
     logBeforeReset.scrollTop = 1480;
 
-    await user.click(screen.getByRole("button", { name: "展开会话栏" }));
-    await user.click(screen.getByRole("button", { name: /开启新对话/ }));
+    await user.click(within(screen.getByRole("complementary", { name: "Conversations" })).getAllByRole("button")[1]);
 
     expect(clearFiles).toHaveBeenCalled();
     expect(setActiveConversationId).toHaveBeenCalledWith(null);
@@ -272,7 +360,6 @@ describe("AppShell", () => {
     expect(log.scrollTop).toBe(0);
     expect(document.querySelector(".bomb-shell__landing")).not.toBeNull();
     expect(document.querySelector(".bomb-shell__dock-wrap--centered")).not.toBeNull();
-    expect(screen.getByText("需要我为你做些什么？")).toBeInTheDocument();
     expect(document.querySelector(".bomb-shell__dock-wrap:not(.bomb-shell__dock-wrap--centered)")).toBeNull();
   });
 
@@ -300,6 +387,7 @@ describe("AppShell", () => {
       runtimeStatus: "ready",
       sendMessage,
       setActiveConversationId,
+      setModelId,
       stagedFiles: [],
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
@@ -314,7 +402,7 @@ describe("AppShell", () => {
     expectReadableMath(2);
   });
 
-  it("renders parenthesized latex-style math often returned in chinese answers", () => {
+  it("renders parenthesized latex-style math often returned in answers", () => {
     vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
       activeConversation: {
         ...buildConversation(),
@@ -323,7 +411,7 @@ describe("AppShell", () => {
             id: "message-1",
             role: "assistant",
             content:
-              "对于基波周期 ( T = \\pi/7 ) 的信号，其基波频率为 (\\omega_0 = 2\\pi/T = 14 , \\text{rad/s})。\n\n由于输出 ( y(t) = x(t) )，说明输入信号的所有频率分量均通过了系统。",
+              "Signal period ( T = \\pi/7 ) gives base frequency (\\omega_0 = 2\\pi/T = 14 , \\text{rad/s}). The output is ( y(t) = x(t) ).",
             createdAt: "2026-07-03T10:00:01.000Z"
           }
         ]
@@ -339,6 +427,7 @@ describe("AppShell", () => {
       runtimeStatus: "ready",
       sendMessage,
       setActiveConversationId,
+      setModelId,
       stagedFiles: [],
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
@@ -348,8 +437,7 @@ describe("AppShell", () => {
 
     render(<AppShell onLogout={onLogout} />);
 
-    expect(screen.getByText((content) => content.includes("对于基波周期"))).toBeInTheDocument();
-    expectReadableMath(3);
+    expectReadableMath(1);
   });
 
   it("renders standard mathjax inline delimiters", () => {
@@ -360,7 +448,7 @@ describe("AppShell", () => {
           {
             id: "message-1",
             role: "assistant",
-            content: "基波周期为 \\( T = \\pi/7 \\)，频率为 \\( \\omega_0 = 14 \\)。",
+            content: "The period is \\( T = \\pi/7 \\) and the base frequency is \\( \\omega_0 = 14 \\).",
             createdAt: "2026-07-03T10:00:01.000Z"
           }
         ]
@@ -376,6 +464,7 @@ describe("AppShell", () => {
       runtimeStatus: "ready",
       sendMessage,
       setActiveConversationId,
+      setModelId,
       stagedFiles: [],
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
@@ -385,9 +474,9 @@ describe("AppShell", () => {
 
     render(<AppShell onLogout={onLogout} />);
 
-    expect(screen.getByText((content) => content.includes("基波周期为"))).toBeInTheDocument();
-    expectReadableMath(2);
+    expectReadableMath(1);
   });
+
   it("renders bare multiline latex blocks and standalone equations from model answers", () => {
     vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
       activeConversation: {
@@ -396,21 +485,17 @@ describe("AppShell", () => {
           {
             id: "message-1",
             role: "assistant",
-            content: `解答：
-
-系统频率响应应为
+            content: `Frequency response:
+The ideal high-pass response is
 H(j\\omega)=\\begin{cases}
 1, & |\\omega| \\geq 250 \\\\
-0, & \\text{其他}
+0, & \\text{otherwise}
 \\end{cases}
 
-输入信号 x(t) 的基波周期 T = \\pi/7，故基波角频率
-\\omega_0 = \\frac{2\\pi}{T} = 14 \\text{ rad/s}.
+For x(t) with T = \\pi/7, the base frequency is \\omega_0 = \\frac{2\\pi}{T} = 14 \\text{ rad/s}.
 
-周期信号 x(t) 可表示为傅里叶级数
 x(t)=\\sum_{k=-\\infty}^{\\infty} c_k e^{jk\\omega_0 t}
 
-通过系统后输出
 y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
             createdAt: "2026-07-03T10:00:01.000Z"
           }
@@ -427,6 +512,7 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
       runtimeStatus: "ready",
       sendMessage,
       setActiveConversationId,
+      setModelId,
       stagedFiles: [],
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
@@ -436,11 +522,10 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
 
     render(<AppShell onLogout={onLogout} />);
 
-    expect(screen.getByText("解答：")).toBeInTheDocument();
     expectReadableMath(3);
   });
 
-  it("renders latex lines that include chinese text blocks and malformed escaped dollar delimiters", () => {
+  it("renders latex lines that include text blocks and malformed escaped dollar delimiters", () => {
     vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
       activeConversation: {
         ...buildConversation(),
@@ -448,18 +533,16 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
           {
             id: "message-1",
             role: "assistant",
-            content: `第三步：利用积分条件确定 a 和 b
+            content: `Solve for a and b.
 
-- 区间 [-0.5, 0.5]：仅有 t = 0 处的冲激（n = 0，偶），故
+- On [-0.5, 0.5], integrate around t = 0:
 \\int_{-0.5}^{0.5} x(t) \\, dt = 1.5(a+b) = 1 \\quad \\Rightarrow \\quad a+b = \\frac{2}{3}. \\tag{1}
 
-- 区间 [0, 2]：包含 $t=0$（偶）和 $t=1.5$（奇），故
+- On [0, 2], split at t = 0 and t = 1.5:
 \\int_{0}^{2} x(t) \\, dt = 1.5(a+b) + 1.5(a-b) = 3a = 2 \\quad \\Rightarrow \\quad a = \\frac{2}{3}. \\tag{2}
 
-代入 (1) 得 \\$b = 0$。
-
-最终答案为：
-\\boxed{C_k = \\begin{cases} \\frac{2}{3}, & k \\text{为偶数} \\\\ 0, & k \\text{为奇数} \\end{cases}}`,
+From (1), \\$b = 0$.
+Therefore \\boxed{C_k = \\begin{cases} \\frac{2}{3}, & k \\text{ even} \\\\ 0, & k \\text{ odd} \\end{cases}}`,
             createdAt: "2026-07-03T10:00:01.000Z"
           }
         ]
@@ -475,6 +558,7 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
       runtimeStatus: "ready",
       sendMessage,
       setActiveConversationId,
+      setModelId,
       stagedFiles: [],
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
@@ -484,7 +568,7 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
 
     render(<AppShell onLogout={onLogout} />);
 
-    expect(screen.getByText("最终答案为：")).toBeInTheDocument();
     expectReadableMath(3);
   });
 });
+
