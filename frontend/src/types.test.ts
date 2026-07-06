@@ -40,11 +40,13 @@ describe("grouped model metadata", () => {
   });
 
   it("round-trips the provider grouping from the canonical catalog", () => {
-    const derivedProviderLabels = Object.fromEntries(
-      DEEPSEEK_MODEL_OPTIONS.map((model) => [model.provider, model.groupLabel])
-    );
+    for (const provider of MODEL_PROVIDER_ORDER) {
+      const providerModels = DEEPSEEK_MODEL_OPTIONS.filter((model) => model.provider === provider);
+      const providerLabels = new Set(providerModels.map((model) => model.groupLabel));
 
-    expect(Object.entries(MODEL_PROVIDER_LABELS)).toEqual(Object.entries(derivedProviderLabels));
+      expect(providerLabels.size).toBe(1);
+      expect([...providerLabels][0]).toBe(MODEL_PROVIDER_LABELS[provider]);
+    }
 
     expect(DEEPSEEK_MODEL_OPTIONS.map((model) => getDeepSeekModelProvider(model.id))).toEqual(
       DEEPSEEK_MODEL_OPTIONS.map((model) => model.provider)
