@@ -46,6 +46,7 @@ const FOCUSABLE_SELECTOR = [
 ].join(", ");
 
 const MODEL_MENU_CLOSE_MS = 220;
+const MODEL_SUBMENU_ID = "webllm-model-submenu";
 
 type ModelButtonRefMap = Partial<Record<DeepSeekModelId, HTMLButtonElement | null>>;
 type ProviderButtonRefMap = Partial<Record<ModelProvider, HTMLButtonElement | null>>;
@@ -634,6 +635,25 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
   }
 
   function handleModelMenuItemKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    const activeModelIndex = activeProviderModels.findIndex(
+      (option) => modelSubmenuItemRefs.current[option.id] === event.currentTarget
+    );
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      const nextOption = activeProviderModels[(activeModelIndex + 1) % activeProviderModels.length];
+      modelSubmenuItemRefs.current[nextOption?.id]?.focus();
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      const nextOption =
+        activeProviderModels[(activeModelIndex - 1 + activeProviderModels.length) % activeProviderModels.length];
+      modelSubmenuItemRefs.current[nextOption?.id]?.focus();
+      return;
+    }
+
     if (event.key === "ArrowLeft") {
       event.preventDefault();
       focusProviderItem(activeProvider);
@@ -916,6 +936,9 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
                         key={provider}
                         type="button"
                         role="menuitem"
+                        aria-haspopup="menu"
+                        aria-expanded={isActive}
+                        aria-controls={MODEL_SUBMENU_ID}
                         disabled={!modelMenuOpen}
                         className={`bomb-shell__model-provider-item${
                           isSelected ? " bomb-shell__model-provider-item--selected" : ""
@@ -934,7 +957,7 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
                   })}
                 </div>
 
-                <div className="bomb-shell__model-submenu">
+                <div id={MODEL_SUBMENU_ID} className="bomb-shell__model-submenu">
                   {activeProviderModels.map((option) => {
                     const isSelected = option.id === modelId;
 

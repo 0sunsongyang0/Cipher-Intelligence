@@ -128,9 +128,19 @@ describe("AppShell", () => {
 
     await user.click(getModelMenuButton());
 
-    expect(screen.getByRole("menuitem", { name: "DeepSeek" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "OpenAI" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Claude" })).toBeInTheDocument();
+    const deepSeekProvider = screen.getByRole("menuitem", { name: "DeepSeek" });
+    const openAiProvider = screen.getByRole("menuitem", { name: "OpenAI" });
+    const claudeProvider = screen.getByRole("menuitem", { name: "Claude" });
+
+    expect(deepSeekProvider).toBeInTheDocument();
+    expect(openAiProvider).toBeInTheDocument();
+    expect(claudeProvider).toBeInTheDocument();
+    expect(deepSeekProvider).toHaveAttribute("aria-haspopup", "menu");
+    expect(deepSeekProvider).toHaveAttribute("aria-expanded", "true");
+    expect(deepSeekProvider).toHaveAttribute("aria-controls");
+    expect(openAiProvider).toHaveAttribute("aria-haspopup", "menu");
+    expect(openAiProvider).toHaveAttribute("aria-expanded", "false");
+    expect(openAiProvider).toHaveAttribute("aria-controls", deepSeekProvider.getAttribute("aria-controls"));
     expect(screen.queryByRole("menuitemradio", { name: "ChatGPT 5.5" })).not.toBeInTheDocument();
   });
 
@@ -139,10 +149,11 @@ describe("AppShell", () => {
     render(<AppShell onLogout={onLogout} />);
 
     await user.click(getModelMenuButton());
-    await user.hover(screen.getByRole("menuitem", { name: "OpenAI" }));
+    await user.click(screen.getByRole("menuitem", { name: "OpenAI" }));
     await user.click(screen.getByRole("menuitemradio", { name: "ChatGPT 5.5" }));
 
     expect(setModelId).toHaveBeenCalledWith("chatgpt-5.5-official");
+    expect(getModelMenuButton()).toHaveAttribute("aria-expanded", "false");
   });
 
   it("highlights the provider for the currently selected model", async () => {
@@ -195,6 +206,12 @@ describe("AppShell", () => {
     fireEvent.keyDown(openAiProvider, { key: "ArrowRight" });
 
     const firstOpenAiModel = screen.getByRole("menuitemradio", { name: "ChatGPT 5.5" });
+    expect(firstOpenAiModel).toHaveFocus();
+
+    fireEvent.keyDown(firstOpenAiModel, { key: "ArrowDown" });
+    expect(screen.getByRole("menuitemradio", { name: "ChatGPT 5.4" })).toHaveFocus();
+
+    fireEvent.keyDown(screen.getByRole("menuitemradio", { name: "ChatGPT 5.4" }), { key: "ArrowUp" });
     expect(firstOpenAiModel).toHaveFocus();
 
     fireEvent.keyDown(firstOpenAiModel, { key: "ArrowLeft" });
