@@ -59,9 +59,7 @@ function expectReadableMath(minCount = 1) {
 }
 
 function getModelMenuButton() {
-  const button = document.querySelector(".bomb-shell__model-pill");
-  expect(button).not.toBeNull();
-  return button as HTMLButtonElement;
+  return screen.getByRole("button", { name: "切换模型" });
 }
 
 describe("AppShell", () => {
@@ -130,9 +128,9 @@ describe("AppShell", () => {
 
     await user.click(getModelMenuButton());
 
-    expect(screen.getByRole("button", { name: "DeepSeek" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "OpenAI" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Claude" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "DeepSeek" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "OpenAI" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Claude" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitemradio", { name: "ChatGPT 5.5" })).not.toBeInTheDocument();
   });
 
@@ -141,7 +139,7 @@ describe("AppShell", () => {
     render(<AppShell onLogout={onLogout} />);
 
     await user.click(getModelMenuButton());
-    await user.hover(screen.getByRole("button", { name: "OpenAI" }));
+    await user.hover(screen.getByRole("menuitem", { name: "OpenAI" }));
     await user.click(screen.getByRole("menuitemradio", { name: "ChatGPT 5.5" }));
 
     expect(setModelId).toHaveBeenCalledWith("chatgpt-5.5-official");
@@ -173,7 +171,7 @@ describe("AppShell", () => {
     render(<AppShell onLogout={onLogout} />);
     await user.click(getModelMenuButton());
 
-    expect(screen.getByRole("button", { name: "Claude" }).className).toContain(
+    expect(screen.getByRole("menuitem", { name: "Claude" }).className).toContain(
       "bomb-shell__model-provider-item--selected"
     );
   });
@@ -347,7 +345,8 @@ describe("AppShell", () => {
     Object.defineProperty(logBeforeReset, "clientHeight", { configurable: true, value: 900 });
     logBeforeReset.scrollTop = 1480;
 
-    await user.click(within(screen.getByRole("complementary", { name: "Conversations" })).getAllByRole("button")[1]);
+    await user.click(screen.getByRole("button", { name: "展开会话栏" }));
+    await user.click(screen.getByRole("button", { name: /开启新对话/ }));
 
     expect(clearFiles).toHaveBeenCalled();
     expect(setActiveConversationId).toHaveBeenCalledWith(null);
@@ -360,6 +359,7 @@ describe("AppShell", () => {
     expect(log.scrollTop).toBe(0);
     expect(document.querySelector(".bomb-shell__landing")).not.toBeNull();
     expect(document.querySelector(".bomb-shell__dock-wrap--centered")).not.toBeNull();
+    expect(screen.getByText("需要我为你做些什么？")).toBeInTheDocument();
     expect(document.querySelector(".bomb-shell__dock-wrap:not(.bomb-shell__dock-wrap--centered)")).toBeNull();
   });
 
@@ -402,7 +402,7 @@ describe("AppShell", () => {
     expectReadableMath(2);
   });
 
-  it("renders parenthesized latex-style math often returned in answers", () => {
+  it("renders parenthesized latex-style math often returned in chinese answers", () => {
     vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
       activeConversation: {
         ...buildConversation(),
@@ -411,7 +411,7 @@ describe("AppShell", () => {
             id: "message-1",
             role: "assistant",
             content:
-              "Signal period ( T = \\pi/7 ) gives base frequency (\\omega_0 = 2\\pi/T = 14 , \\text{rad/s}). The output is ( y(t) = x(t) ).",
+              "对于基波周期 ( T = \\pi/7 ) 的信号，其基波频率为 (\\omega_0 = 2\\pi/T = 14 , \\text{rad/s})。\n\n由于输出 ( y(t) = x(t) )，说明输入信号的所有频率分量均通过了系统。",
             createdAt: "2026-07-03T10:00:01.000Z"
           }
         ]
@@ -437,7 +437,8 @@ describe("AppShell", () => {
 
     render(<AppShell onLogout={onLogout} />);
 
-    expectReadableMath(1);
+    expect(screen.getByText((content) => content.includes("对于基波周期"))).toBeInTheDocument();
+    expectReadableMath(3);
   });
 
   it("renders standard mathjax inline delimiters", () => {
@@ -448,7 +449,7 @@ describe("AppShell", () => {
           {
             id: "message-1",
             role: "assistant",
-            content: "The period is \\( T = \\pi/7 \\) and the base frequency is \\( \\omega_0 = 14 \\).",
+            content: "基波周期为 \\( T = \\pi/7 \\)，频率为 \\( \\omega_0 = 14 \\)。",
             createdAt: "2026-07-03T10:00:01.000Z"
           }
         ]
@@ -474,7 +475,8 @@ describe("AppShell", () => {
 
     render(<AppShell onLogout={onLogout} />);
 
-    expectReadableMath(1);
+    expect(screen.getByText((content) => content.includes("基波周期为"))).toBeInTheDocument();
+    expectReadableMath(2);
   });
 
   it("renders bare multiline latex blocks and standalone equations from model answers", () => {
@@ -485,17 +487,21 @@ describe("AppShell", () => {
           {
             id: "message-1",
             role: "assistant",
-            content: `Frequency response:
-The ideal high-pass response is
+            content: `解答：
+
+系统频率响应应为
 H(j\\omega)=\\begin{cases}
 1, & |\\omega| \\geq 250 \\\\
-0, & \\text{otherwise}
+0, & \\text{其他}
 \\end{cases}
 
-For x(t) with T = \\pi/7, the base frequency is \\omega_0 = \\frac{2\\pi}{T} = 14 \\text{ rad/s}.
+输入信号 x(t) 的基波周期 T = \\pi/7，故基波角频率
+\\omega_0 = \\frac{2\\pi}{T} = 14 \\text{ rad/s}.
 
+周期信号 x(t) 可表示为傅里叶级数
 x(t)=\\sum_{k=-\\infty}^{\\infty} c_k e^{jk\\omega_0 t}
 
+通过系统后输出
 y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
             createdAt: "2026-07-03T10:00:01.000Z"
           }
@@ -522,10 +528,11 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
 
     render(<AppShell onLogout={onLogout} />);
 
+    expect(screen.getByText("解答：")).toBeInTheDocument();
     expectReadableMath(3);
   });
 
-  it("renders latex lines that include text blocks and malformed escaped dollar delimiters", () => {
+  it("renders latex lines that include chinese text blocks and malformed escaped dollar delimiters", () => {
     vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
       activeConversation: {
         ...buildConversation(),
@@ -533,16 +540,18 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
           {
             id: "message-1",
             role: "assistant",
-            content: `Solve for a and b.
+            content: `第三步：利用积分条件确定 a 和 b
 
-- On [-0.5, 0.5], integrate around t = 0:
+- 区间 [-0.5, 0.5]：仅有 t = 0 处的冲激（n = 0，偶），故
 \\int_{-0.5}^{0.5} x(t) \\, dt = 1.5(a+b) = 1 \\quad \\Rightarrow \\quad a+b = \\frac{2}{3}. \\tag{1}
 
-- On [0, 2], split at t = 0 and t = 1.5:
+- 区间 [0, 2]：包含 $t=0$（偶）和 $t=1.5$（奇），故
 \\int_{0}^{2} x(t) \\, dt = 1.5(a+b) + 1.5(a-b) = 3a = 2 \\quad \\Rightarrow \\quad a = \\frac{2}{3}. \\tag{2}
 
-From (1), \\$b = 0$.
-Therefore \\boxed{C_k = \\begin{cases} \\frac{2}{3}, & k \\text{ even} \\\\ 0, & k \\text{ odd} \\end{cases}}`,
+代入 (1) 得 \\$b = 0$。
+
+最终答案为：
+\\boxed{C_k = \\begin{cases} \\frac{2}{3}, & k \\text{为偶数} \\\\ 0, & k \\text{为奇数} \\end{cases}}`,
             createdAt: "2026-07-03T10:00:01.000Z"
           }
         ]
@@ -568,6 +577,7 @@ Therefore \\boxed{C_k = \\begin{cases} \\frac{2}{3}, & k \\text{ even} \\\\ 0, &
 
     render(<AppShell onLogout={onLogout} />);
 
+    expect(screen.getByText("最终答案为：")).toBeInTheDocument();
     expectReadableMath(3);
   });
 });

@@ -848,6 +848,7 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
                       <button
                         key={provider}
                         type="button"
+                        role="menuitem"
                         className={`bomb-shell__model-provider-item${
                           isSelected ? " bomb-shell__model-provider-item--selected" : ""
                         }${isActive ? " bomb-shell__model-provider-item--active" : ""}`}
