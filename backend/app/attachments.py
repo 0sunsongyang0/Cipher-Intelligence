@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -7,7 +8,7 @@ from pathlib import Path
 from fastapi import UploadFile
 
 
-MAX_FILE_COUNT = 5
+MAX_FILE_COUNT = 10
 MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024
 MAX_FILE_CHARS = 12_000
 MAX_TOTAL_CHARS = 40_000
@@ -37,6 +38,19 @@ class ExtractedAttachment:
     category: str
     text: str
     warning: str | None = None
+
+
+@dataclass
+class VisionImageAttachment:
+    filename: str
+    media_type: str
+    data_url: str
+
+
+@dataclass
+class PreparedAttachments:
+    extracted: list[ExtractedAttachment]
+    vision_images: list[VisionImageAttachment]
 
 
 class AttachmentError(ValueError):
@@ -123,11 +137,37 @@ def extract_image_text(raw: bytes) -> str:
         raise AttachmentError("Unable to extract text from image attachment.") from exc
 
 
-async def extract_attachments(files: list[UploadFile]) -> list[ExtractedAttachment]:
+def build_image_data_url(raw: bytes, media_type: str) -> str:
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{media_type};base64,{encoded}"
+
+
+def guess_image_media_type(filename: str, fallback: str | None = None) -> str:
+    if fallback and fallback.startswith("image/"):
+        return fallback
+
+    extension = Path(filename).suffix.lower()
+    if extension == ".png":
+        return "image/png"
+    if extension in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if extension == ".webp":
+        return "image/webp"
+    if extension == ".bmp":
+        return "image/bmp"
+    return "application/octet-stream"
+
+
+async def prepare_attachments(
+    files: list[UploadFile],
+    *,
+    enable_native_vision: bool = False,
+) -> PreparedAttachments:
     if len(files) > MAX_FILE_COUNT:
-        raise AttachmentError("Too many files. Maximum 5 files are allowed per request.")
+        raise AttachmentError("Too many files. Maximum 10 files are allowed per request.")
 
     extracted: list[ExtractedAttachment] = []
+    vision_images: list[VisionImageAttachment] = []
     total_chars = 0
 
     for file in files:
@@ -148,6 +188,17 @@ async def extract_attachments(files: list[UploadFile]) -> list[ExtractedAttachme
             text = extract_docx_text(raw)
             category = "docx"
         elif extension in IMAGE_EXTENSIONS:
+            if enable_native_vision:
+                media_type = guess_image_media_type(filename, file.content_type)
+                vision_images.append(
+                    VisionImageAttachment(
+                        filename=filename,
+                        media_type=media_type,
+                        data_url=build_image_data_url(raw, media_type),
+                    )
+                )
+                continue
+
             text = extract_image_text(raw)
             category = "image-ocr"
         else:
@@ -177,7 +228,11 @@ async def extract_attachments(files: list[UploadFile]) -> list[ExtractedAttachme
             )
         )
 
-    return extracted
+    return PreparedAttachments(extracted=extracted, vision_images=vision_images)
+
+
+async def extract_attachments(files: list[UploadFile]) -> list[ExtractedAttachment]:
+    return (await prepare_attachments(files)).extracted
 
 
 def build_attachment_block(items: list[ExtractedAttachment]) -> str:

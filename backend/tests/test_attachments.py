@@ -51,6 +51,28 @@ async def test_extract_attachments_rejects_empty_ocr_output(monkeypatch) -> None
         await extract_attachments([make_upload_file("shot.png", b"fake-image")])
 
 
+@pytest.mark.anyio
+async def test_extract_attachments_allows_ten_files() -> None:
+    files = [make_upload_file(f"note-{index}.txt", b"ok") for index in range(10)]
+
+    extracted = await extract_attachments(files)
+
+    assert len(extracted) == 10
+    assert extracted[0].text == "ok"
+    assert extracted[-1].text == "ok"
+
+
+@pytest.mark.anyio
+async def test_extract_attachments_rejects_eleven_files() -> None:
+    files = [make_upload_file(f"note-{index}.txt", b"ok") for index in range(11)]
+
+    with pytest.raises(
+        AttachmentError,
+        match=r"^Too many files\. Maximum 10 files are allowed per request\.$",
+    ):
+        await extract_attachments(files)
+
+
 def test_extract_pdf_text_wraps_parser_errors(monkeypatch) -> None:
     class BrokenPdfReader:
         def __init__(self, _stream, strict=True):
