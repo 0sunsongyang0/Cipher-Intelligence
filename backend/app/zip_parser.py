@@ -155,30 +155,32 @@ async def parse_zip_upload(archive_name: str, raw: bytes) -> ParsedZipUpload:
                     raise AttachmentError("ZIP archive is too large when extracted.")
 
                 category, extension = _classify_zip_entry(filename)
-                entry_raw = archive.read(info)
-
                 extracted: ExtractedAttachment | None = None
                 warning: str | None = None
 
                 if category == "text":
+                    entry_raw = archive.read(info)
                     extracted = _normalize_extracted_attachment(
                         filename=filename,
                         category="text",
                         text=decode_text_file(entry_raw),
                     )
                 elif category == "pdf":
+                    entry_raw = archive.read(info)
                     extracted = _normalize_extracted_attachment(
                         filename=filename,
                         category="pdf",
                         text=extract_pdf_text(entry_raw),
                     )
                 elif category == "docx":
+                    entry_raw = archive.read(info)
                     extracted = _normalize_extracted_attachment(
                         filename=filename,
                         category="docx",
                         text=extract_docx_text(entry_raw),
                     )
                 elif category == "image":
+                    entry_raw = archive.read(info)
                     media_type = guess_image_media_type(filename)
                     vision_images.append(
                         VisionImageAttachment(

@@ -18,6 +18,10 @@ def make_zip(entries: dict[str, bytes]) -> bytes:
     return buffer.getvalue()
 
 
+def inventory_by_filename(parsed) -> dict[str, object]:
+    return {entry.filename: entry for entry in parsed.inventory_entries}
+
+
 @pytest.mark.anyio
 async def test_parse_zip_upload_extracts_supported_text_entries() -> None:
     archive_bytes = make_zip(
@@ -101,10 +105,19 @@ async def test_parse_zip_upload_skips_system_entries_and_keeps_images_in_invento
     assert [item.filename for item in parsed.extracted_items] == ["notes.txt"]
     assert parsed.extracted_items[0].text == "kept"
     assert len(parsed.vision_images) == 1
-    assert {entry.filename: entry.status for entry in parsed.inventory_entries} == {
-        "photo.png": "inventory-only",
-        "notes.txt": "extracted",
-    }
+    inventory = inventory_by_filename(parsed)
+    assert inventory["photo.png"].category == "image"
+    assert inventory["photo.png"].extension == ".png"
+    assert inventory["photo.png"].size_bytes == len(b"fake image bytes")
+    assert inventory["photo.png"].extracted is False
+    assert inventory["photo.png"].status == "inventory-only"
+    assert inventory["photo.png"].warning is None
+    assert inventory["notes.txt"].category == "text"
+    assert inventory["notes.txt"].extension == ".txt"
+    assert inventory["notes.txt"].size_bytes == len(b"kept")
+    assert inventory["notes.txt"].extracted is True
+    assert inventory["notes.txt"].status == "extracted"
+    assert inventory["notes.txt"].warning is None
 
 
 @pytest.mark.anyio
@@ -159,6 +172,12 @@ async def test_parse_zip_upload_allows_many_entries_when_budgets_are_safe() -> N
     assert parsed.entry_count == 30
     assert parsed.extracted_entry_count == 30
     assert parsed.inventory_only_count == 0
+    assert all(entry.category == "text" for entry in parsed.inventory_entries)
+    assert all(entry.extension == ".txt" for entry in parsed.inventory_entries)
+    assert all(entry.size_bytes == len(b"ok") for entry in parsed.inventory_entries)
+    assert all(entry.extracted is True for entry in parsed.inventory_entries)
+    assert all(entry.status == "extracted" for entry in parsed.inventory_entries)
+    assert all(entry.warning is None for entry in parsed.inventory_entries)
 
 
 @pytest.mark.anyio
@@ -186,13 +205,37 @@ async def test_parse_zip_upload_accepts_mixed_content_and_tracks_inventory(
         "screens/snap.png",
     ]
     assert len(parsed.vision_images) == 1
-    assert {entry.filename: entry.status for entry in parsed.inventory_entries} == {
-        "notes.txt": "extracted",
-        "screens/snap.png": "extracted",
-        "audio/voice.mp3": "inventory-only",
-        "video/demo.mp4": "inventory-only",
-        "db/cache.db": "inventory-only",
-    }
+    inventory = inventory_by_filename(parsed)
+    assert inventory["notes.txt"].category == "text"
+    assert inventory["notes.txt"].extension == ".txt"
+    assert inventory["notes.txt"].size_bytes == len(b"hello")
+    assert inventory["notes.txt"].extracted is True
+    assert inventory["notes.txt"].status == "extracted"
+    assert inventory["notes.txt"].warning is None
+    assert inventory["screens/snap.png"].category == "image"
+    assert inventory["screens/snap.png"].extension == ".png"
+    assert inventory["screens/snap.png"].size_bytes == len(b"fake-image")
+    assert inventory["screens/snap.png"].extracted is True
+    assert inventory["screens/snap.png"].status == "extracted"
+    assert inventory["screens/snap.png"].warning is None
+    assert inventory["audio/voice.mp3"].category == "audio"
+    assert inventory["audio/voice.mp3"].extension == ".mp3"
+    assert inventory["audio/voice.mp3"].size_bytes == len(b"fake-audio")
+    assert inventory["audio/voice.mp3"].extracted is False
+    assert inventory["audio/voice.mp3"].status == "inventory-only"
+    assert inventory["audio/voice.mp3"].warning is None
+    assert inventory["video/demo.mp4"].category == "video"
+    assert inventory["video/demo.mp4"].extension == ".mp4"
+    assert inventory["video/demo.mp4"].size_bytes == len(b"fake-video")
+    assert inventory["video/demo.mp4"].extracted is False
+    assert inventory["video/demo.mp4"].status == "inventory-only"
+    assert inventory["video/demo.mp4"].warning is None
+    assert inventory["db/cache.db"].category == "binary-db"
+    assert inventory["db/cache.db"].extension == ".db"
+    assert inventory["db/cache.db"].size_bytes == len(b"fake-db")
+    assert inventory["db/cache.db"].extracted is False
+    assert inventory["db/cache.db"].status == "inventory-only"
+    assert inventory["db/cache.db"].warning is None
 
 
 @pytest.mark.anyio
@@ -210,7 +253,20 @@ async def test_parse_zip_upload_accepts_inventory_only_archives() -> None:
     assert parsed.extracted_entry_count == 0
     assert parsed.inventory_only_count == 2
     assert parsed.extracted_items == []
-    assert len(parsed.inventory_entries) == 2
+    inventory = inventory_by_filename(parsed)
+    assert len(inventory) == 2
+    assert inventory["audio/voice.mp3"].category == "audio"
+    assert inventory["audio/voice.mp3"].extension == ".mp3"
+    assert inventory["audio/voice.mp3"].size_bytes == len(b"fake-audio")
+    assert inventory["audio/voice.mp3"].extracted is False
+    assert inventory["audio/voice.mp3"].status == "inventory-only"
+    assert inventory["audio/voice.mp3"].warning is None
+    assert inventory["db/cache.db"].category == "binary-db"
+    assert inventory["db/cache.db"].extension == ".db"
+    assert inventory["db/cache.db"].size_bytes == len(b"fake-db")
+    assert inventory["db/cache.db"].extracted is False
+    assert inventory["db/cache.db"].status == "inventory-only"
+    assert inventory["db/cache.db"].warning is None
 
 
 @pytest.mark.anyio
@@ -224,8 +280,41 @@ async def test_parse_zip_upload_keeps_image_in_inventory_when_ocr_is_empty(
 
     assert parsed.extracted_items == []
     assert len(parsed.vision_images) == 1
-    assert parsed.inventory_entries[0].filename == "screens/snap.png"
-    assert parsed.inventory_entries[0].status == "inventory-only"
+    inventory = parsed.inventory_entries[0]
+    assert inventory.filename == "screens/snap.png"
+    assert inventory.category == "image"
+    assert inventory.extension == ".png"
+    assert inventory.size_bytes == len(b"fake-image")
+    assert inventory.extracted is False
+    assert inventory.status == "inventory-only"
+    assert inventory.warning is None
+
+
+@pytest.mark.anyio
+async def test_parse_zip_upload_does_not_read_inventory_only_entries(monkeypatch) -> None:
+    archive_bytes = make_zip(
+        {
+            "audio/voice.mp3": b"fake-audio",
+            "notes.txt": b"hello",
+        }
+    )
+
+    original_zip_file = zip_parser_module.zipfile.ZipFile
+
+    class TrackingZipFile(original_zip_file):
+        def read(self, name, pwd=None):
+            info = name if isinstance(name, zipfile.ZipInfo) else self.getinfo(name)
+            if info.filename == "audio/voice.mp3":
+                raise AssertionError("inventory-only entry should not be read")
+            return super().read(name, pwd=pwd)
+
+    monkeypatch.setattr(zip_parser_module.zipfile, "ZipFile", TrackingZipFile)
+
+    parsed = await parse_zip_upload("inventory-read.zip", archive_bytes)
+
+    inventory = inventory_by_filename(parsed)
+    assert inventory["audio/voice.mp3"].status == "inventory-only"
+    assert inventory["notes.txt"].status == "extracted"
 
 
 @pytest.mark.anyio
