@@ -1,9 +1,11 @@
 import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from io import BytesIO
 from pathlib import Path
 from shutil import rmtree
 from tempfile import mkdtemp
+import zipfile
 
 import pytest
 import httpx
@@ -13,15 +15,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import app.database as database_module
-from app.auth import COOKIE_NAME
+from app.auth import COOKIE_NAME, get_session_record
 from app.routes.auth import router as auth_router
 from app.database import engine
+from app.database import SessionLocal
 from app.config import settings
 from app.database import init_db
 from app.deepseek import stream_chat_completion
 from app.rate_limit import reset_failed_attempts
 from app.routes.chat import router as chat_router
 from app.routes.frontend import FRONTEND_ASSETS_DIR, router as frontend_router
+from app.routes.upload_zip import router as upload_zip_router
+from app.zip_context_store import zip_context_store
 
 
 def login(client) -> str:
@@ -31,6 +36,21 @@ def login(client) -> str:
     )
     assert response.status_code == 200
     return response.cookies[COOKIE_NAME]
+
+
+def make_zip(entries: dict[str, bytes]) -> bytes:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for filename, content in entries.items():
+            archive.writestr(filename, content)
+    return buffer.getvalue()
+
+
+def get_owner_session_id(session_token: str) -> int:
+    with SessionLocal() as db:
+        session = get_session_record(db, session_token)
+        assert session is not None
+        return session.id
 
 
 @pytest.fixture()
@@ -55,6 +75,7 @@ def chat_client():
 
     app.include_router(auth_router)
     app.include_router(chat_router)
+    app.include_router(upload_zip_router)
     if FRONTEND_ASSETS_DIR.is_dir():
         from fastapi.staticfiles import StaticFiles
 
@@ -221,6 +242,485 @@ def test_chat_requires_authenticated_session(chat_client) -> None:
     assert response.json() == {"detail": "Not authenticated"}
 
 
+def test_upload_zip_requires_authenticated_session(chat_client) -> None:
+    response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-1",
+            "model": "deepseek-v4-flash",
+        },
+        files={
+            "file": ("notes.zip", make_zip({"notes.txt": b"hello"}), "application/zip"),
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Not authenticated"}
+
+
+def test_upload_zip_returns_richer_context_summary_for_authenticated_session(chat_client) -> None:
+    login(chat_client)
+
+    response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-1",
+            "model": "chatgpt-5.5-official",
+        },
+        files={
+            "file": (
+                "notes.zip",
+                make_zip(
+                    {
+                        "notes.txt": b"hello",
+                        "audio/voice.mp3": b"fake-audio",
+                    }
+                ),
+                "application/zip",
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload["zipContextId"], str)
+    assert payload["zipContextId"]
+    assert payload == {
+        "zipContextId": payload["zipContextId"],
+        "archiveName": "notes.zip",
+        "entryCount": 2,
+        "extractedEntryCount": 1,
+        "inventoryOnlyCount": 1,
+        "skippedEntryCount": 0,
+        "supportedByCurrentModel": True,
+        "unsupportedReason": None,
+    }
+
+
+def test_upload_zip_stores_context_for_later_chat_use_and_overwrites_same_conversation(chat_client) -> None:
+    session_token = login(chat_client)
+    owner_session_id = get_owner_session_id(session_token)
+
+    first_response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-1",
+            "model": "deepseek-v4-flash",
+        },
+        files={
+            "file": ("first.zip", make_zip({"notes.txt": b"alpha"}), "application/zip"),
+        },
+    )
+    assert first_response.status_code == 200
+    first_payload = first_response.json()
+
+    stored_first = zip_context_store.get_for_scope(
+        first_payload["zipContextId"],
+        owner_session_id=owner_session_id,
+        conversation_id="conversation-1",
+    )
+    assert stored_first is not None
+    assert stored_first.owner_session_id == owner_session_id
+    assert stored_first.conversation_id == "conversation-1"
+    assert stored_first.archive_name == "first.zip"
+    assert "alpha" in stored_first.attachment_block
+
+    second_response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-1",
+            "model": "deepseek-v4-flash",
+        },
+        files={
+            "file": ("second.zip", make_zip({"notes.txt": b"beta"}), "application/zip"),
+        },
+    )
+    assert second_response.status_code == 200
+    second_payload = second_response.json()
+
+    assert (
+        zip_context_store.get_for_scope(
+            first_payload["zipContextId"],
+            owner_session_id=owner_session_id,
+            conversation_id="conversation-1",
+        )
+        is None
+    )
+    stored_second = zip_context_store.get_for_scope(
+        second_payload["zipContextId"],
+        owner_session_id=owner_session_id,
+        conversation_id="conversation-1",
+    )
+    assert stored_second is not None
+    assert stored_second.archive_name == "second.zip"
+    assert "beta" in stored_second.attachment_block
+
+    zip_context_store.clear_conversation(owner_session_id, "conversation-1")
+    assert (
+        zip_context_store.get_for_scope(
+            second_payload["zipContextId"],
+            owner_session_id=owner_session_id,
+            conversation_id="conversation-1",
+        )
+        is None
+    )
+
+
+def test_upload_zip_isolates_contexts_between_sessions_for_same_conversation_id(chat_client) -> None:
+    first_cookie = login(chat_client)
+    first_owner_session_id = get_owner_session_id(first_cookie)
+    chat_client.cookies.clear()
+    second_cookie = login(chat_client)
+    second_owner_session_id = get_owner_session_id(second_cookie)
+
+    chat_client.cookies.set(COOKIE_NAME, first_cookie)
+    first_response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-shared",
+            "model": "deepseek-v4-flash",
+        },
+        files={
+            "file": ("first.zip", make_zip({"notes.txt": b"alpha"}), "application/zip"),
+        },
+    )
+    assert first_response.status_code == 200
+    first_payload = first_response.json()
+
+    chat_client.cookies.set(COOKIE_NAME, second_cookie)
+    second_response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-shared",
+            "model": "deepseek-v4-flash",
+        },
+        files={
+            "file": ("second.zip", make_zip({"notes.txt": b"beta"}), "application/zip"),
+        },
+    )
+    assert second_response.status_code == 200
+    second_payload = second_response.json()
+
+    first_stored = zip_context_store.get_for_scope(
+        first_payload["zipContextId"],
+        owner_session_id=first_owner_session_id,
+        conversation_id="conversation-shared",
+    )
+    second_stored = zip_context_store.get_for_scope(
+        second_payload["zipContextId"],
+        owner_session_id=second_owner_session_id,
+        conversation_id="conversation-shared",
+    )
+
+    assert first_stored is not None
+    assert second_stored is not None
+    assert first_stored.owner_session_id == first_owner_session_id
+    assert second_stored.owner_session_id == second_owner_session_id
+    assert first_stored.owner_session_id != second_stored.owner_session_id
+    assert first_stored.conversation_id == second_stored.conversation_id == "conversation-shared"
+    assert first_stored.archive_name == "first.zip"
+    assert second_stored.archive_name == "second.zip"
+    assert "alpha" in first_stored.attachment_block
+    assert "beta" in second_stored.attachment_block
+
+
+def test_chat_appends_zip_inventory_context_to_last_user_message(chat_client, monkeypatch) -> None:
+    login(chat_client)
+
+    upload_response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-zip",
+            "model": "deepseek-v4-flash",
+        },
+        files={
+            "file": (
+                "notes.zip",
+                make_zip(
+                    {
+                        "notes.txt": b"zip body text",
+                        "audio/voice.mp3": b"fake-audio",
+                    }
+                ),
+                "application/zip",
+            ),
+        },
+    )
+    assert upload_response.status_code == 200
+    zip_context_id = upload_response.json()["zipContextId"]
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "deepseek-v4-flash"
+        assert messages[-1]["role"] == "user"
+        assert messages[-1]["content"].startswith("Please compare both contexts")
+        assert "attachment body text" in messages[-1]["content"]
+        assert "[ZIP context]\nArchive: notes.zip\n\n" in messages[-1]["content"]
+        assert "[Attached files]" in messages[-1]["content"]
+        assert "[ZIP file inventory]" in messages[-1]["content"]
+        assert "audio/voice.mp3 | audio | 10 B | inventory-only" in messages[-1]["content"]
+        assert "zip body text" in messages[-1]["content"]
+        assert messages[-1]["content"].index("attachment body text") < messages[-1]["content"].index("[ZIP context]\nArchive: notes.zip\n\n")
+        assert messages[-1]["content"].index("[ZIP context]\nArchive: notes.zip\n\n") < messages[-1]["content"].index("zip body text")
+        yield "ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        data={
+            "messages": (
+                f'{{"model":"deepseek-v4-flash","conversationId":"conversation-zip","zipContextId":"{zip_context_id}",'
+                '"messages":[{"role":"user","content":"Please compare both contexts"}]}'
+            ),
+        },
+        files={
+            "files": ("notes.txt", b"attachment body text", "text/plain"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+def test_chat_allows_zip_context_for_openai_model(chat_client, monkeypatch) -> None:
+    login(chat_client)
+
+    upload_response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-zip",
+            "model": "deepseek-v4-flash",
+        },
+        files={
+            "file": ("notes.zip", make_zip({"notes.txt": b"zip body text"}), "application/zip"),
+        },
+    )
+    assert upload_response.status_code == 200
+    zip_context_id = upload_response.json()["zipContextId"]
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "chatgpt-5.5-official"
+        assert messages[-1]["role"] == "user"
+        assert messages[-1]["content"].startswith("hello")
+        assert "[ZIP context]\nArchive: notes.zip\n\n" in messages[-1]["content"]
+        assert "zip body text" in messages[-1]["content"]
+        yield "openai-ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        json={
+            "model": "chatgpt-5.5-official",
+            "conversationId": "conversation-zip",
+            "zipContextId": zip_context_id,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "openai-ok"
+
+
+def test_chat_allows_zip_context_for_claude_model(chat_client, monkeypatch) -> None:
+    login(chat_client)
+
+    upload_response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-zip",
+            "model": "deepseek-v4-flash",
+        },
+        files={
+            "file": ("notes.zip", make_zip({"notes.txt": b"zip body text"}), "application/zip"),
+        },
+    )
+    assert upload_response.status_code == 200
+    zip_context_id = upload_response.json()["zipContextId"]
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "claude-opus-4-7-official"
+        assert messages[-1]["role"] == "user"
+        assert messages[-1]["content"].startswith("hello")
+        assert "[ZIP context]\nArchive: notes.zip\n\n" in messages[-1]["content"]
+        assert "zip body text" in messages[-1]["content"]
+        yield "claude-ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        json={
+            "model": "claude-opus-4-7-official",
+            "conversationId": "conversation-zip",
+            "zipContextId": zip_context_id,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "claude-ok"
+
+
+def test_chat_reuses_stored_zip_images_for_openai_model(chat_client, monkeypatch) -> None:
+    login(chat_client)
+    monkeypatch.setattr("app.zip_parser.extract_image_text", lambda _raw: "")
+
+    upload_response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-zip",
+            "model": "chatgpt-5.5-official",
+        },
+        files={
+            "file": (
+                "images.zip",
+                make_zip({"screens/snap.png": b"fake-image"}),
+                "application/zip",
+            ),
+        },
+    )
+    assert upload_response.status_code == 200
+    zip_context_id = upload_response.json()["zipContextId"]
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "chatgpt-5.5-official"
+        assert isinstance(messages[-1]["content"], list)
+        assert messages[-1]["content"][0]["type"] == "text"
+        assert "[ZIP context]" in messages[-1]["content"][0]["text"]
+        assert "[ZIP file inventory]" in messages[-1]["content"][0]["text"]
+        assert messages[-1]["content"][1]["type"] == "image_url"
+        assert messages[-1]["content"][1]["image_url"]["url"] == "data:image/png;base64,ZmFrZS1pbWFnZQ=="
+        yield "openai-zip-image-ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        json={
+            "model": "chatgpt-5.5-official",
+            "conversationId": "conversation-zip",
+            "zipContextId": zip_context_id,
+            "messages": [{"role": "user", "content": "Describe the ZIP screenshot"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "openai-zip-image-ok"
+
+
+def test_chat_reuses_stored_zip_images_for_claude_model(chat_client, monkeypatch) -> None:
+    login(chat_client)
+    monkeypatch.setattr("app.zip_parser.extract_image_text", lambda _raw: "")
+
+    upload_response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-zip",
+            "model": "claude-opus-4-7-official",
+        },
+        files={
+            "file": (
+                "images.zip",
+                make_zip({"screens/snap.png": b"fake-image"}),
+                "application/zip",
+            ),
+        },
+    )
+    assert upload_response.status_code == 200
+    zip_context_id = upload_response.json()["zipContextId"]
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "claude-opus-4-7-official"
+        assert isinstance(messages[-1]["content"], list)
+        assert messages[-1]["content"][0]["type"] == "text"
+        assert "[ZIP context]" in messages[-1]["content"][0]["text"]
+        assert messages[-1]["content"][1]["type"] == "image_url"
+        assert messages[-1]["content"][1]["image_url"]["url"] == "data:image/png;base64,ZmFrZS1pbWFnZQ=="
+        yield "claude-zip-image-ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        json={
+            "model": "claude-opus-4-7-official",
+            "conversationId": "conversation-zip",
+            "zipContextId": zip_context_id,
+            "messages": [{"role": "user", "content": "Describe the ZIP screenshot"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "claude-zip-image-ok"
+
+
+def test_chat_rejects_missing_or_expired_zip_context_for_current_session(chat_client) -> None:
+    login(chat_client)
+
+    response = chat_client.post(
+        "/api/chat",
+        json={
+            "model": "deepseek-v4-flash",
+            "conversationId": "conversation-zip",
+            "zipContextId": "missing-zip-context",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "ZIP 上下文不存在或已过期，请重新上传压缩包。"
+    }
+
+
+def test_chat_rejects_zip_context_from_different_conversation_in_same_session(chat_client) -> None:
+    login(chat_client)
+
+    upload_response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-a",
+            "model": "deepseek-v4-flash",
+        },
+        files={
+            "file": ("notes.zip", make_zip({"notes.txt": b"zip body text"}), "application/zip"),
+        },
+    )
+    assert upload_response.status_code == 200
+    zip_context_id = upload_response.json()["zipContextId"]
+
+    response = chat_client.post(
+        "/api/chat",
+        json={
+            "model": "deepseek-v4-flash",
+            "conversationId": "conversation-b",
+            "zipContextId": zip_context_id,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "ZIP 上下文不存在或已过期，请重新上传压缩包。"
+    }
+
+
 def test_chat_streams_plain_text_response_for_authenticated_session(chat_client, monkeypatch) -> None:
     login(chat_client)
 
@@ -305,7 +805,7 @@ async def test_stream_chat_completion_translates_http_status_errors(monkeypatch)
 
     with pytest.raises(
         RuntimeError,
-        match=r"^DeepSeek upstream returned 401 Unauthorized$",
+        match=r"^Model upstream returned 401 Unauthorized$",
     ):
         async for _chunk in stream_chat_completion([{"role": "user", "content": "ping"}]):
             pass
@@ -327,7 +827,7 @@ async def test_stream_chat_completion_translates_request_errors(monkeypatch) -> 
 
     with pytest.raises(
         RuntimeError,
-        match=r"^DeepSeek request failed before streaming completed\.$",
+        match=r"^Model upstream request failed before streaming completed\.$",
     ):
         async for _chunk in stream_chat_completion([{"role": "user", "content": "ping"}]):
             pass
@@ -509,6 +1009,128 @@ def test_chat_includes_docx_attachment_text_in_last_user_message(chat_client, mo
 
     assert response.status_code == 200
     assert response.text == "ok"
+
+
+def test_chat_uses_native_vision_payload_for_chatgpt_image_attachments(
+    chat_client,
+    monkeypatch,
+) -> None:
+    login(chat_client)
+
+    def fail_if_ocr_called(_raw):
+        raise AssertionError("ChatGPT image uploads should not require OCR extraction.")
+
+    monkeypatch.setattr("app.attachments.extract_image_text", fail_if_ocr_called)
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "chatgpt-5.5-official"
+        assert messages == [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "请描述这张图"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,ZmFrZS1pbWFnZQ=="},
+                    },
+                ],
+            }
+        ]
+        yield "vision-ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        data={
+            "messages": '{"model":"chatgpt-5.5-official","messages":[{"role":"user","content":"请描述这张图"}]}',
+        },
+        files={"files": ("shot.png", b"fake-image", "image/png")},
+    )
+
+    assert response.status_code == 200
+    assert response.text == "vision-ok"
+
+
+def test_chat_uses_native_vision_payload_for_claude_image_attachments(
+    chat_client,
+    monkeypatch,
+) -> None:
+    login(chat_client)
+
+    def fail_if_ocr_called(_raw):
+        raise AssertionError("Claude image uploads should not require OCR extraction.")
+
+    monkeypatch.setattr("app.attachments.extract_image_text", fail_if_ocr_called)
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "claude-opus-4-7-official"
+        assert messages == [
+            {
+                "role": "system",
+                "content": "你是一个视觉助手",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "请分析图片"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,ZmFrZS1pbWFnZQ=="},
+                    },
+                ],
+            },
+        ]
+        yield "claude-vision-ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        data={
+            "messages": '{"model":"claude-opus-4-7-official","messages":[{"role":"system","content":"你是一个视觉助手"},{"role":"user","content":"请分析图片"}]}',
+        },
+        files={"files": ("shot.png", b"fake-image", "image/png")},
+    )
+
+    assert response.status_code == 200
+    assert response.text == "claude-vision-ok"
+
+
+def test_chat_keeps_ocr_flow_for_deepseek_image_attachments(chat_client, monkeypatch) -> None:
+    login(chat_client)
+    monkeypatch.setattr("app.attachments.extract_image_text", lambda _raw: "OCR text")
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "deepseek-v4-flash"
+        assert messages[-1]["role"] == "user"
+        assert isinstance(messages[-1]["content"], str)
+        assert "[Attached files]" in messages[-1]["content"]
+        assert "shot.png" in messages[-1]["content"]
+        assert "OCR text" in messages[-1]["content"]
+        yield "deepseek-ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        data={
+            "messages": '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"读取图片"}]}',
+        },
+        files={"files": ("shot.png", b"fake-image", "image/png")},
+    )
+
+    assert response.status_code == 200
+    assert response.text == "deepseek-ok"
 
 
 def test_chat_rejects_image_when_ocr_extracts_no_text(chat_client, monkeypatch) -> None:

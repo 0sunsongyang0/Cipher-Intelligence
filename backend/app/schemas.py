@@ -1,7 +1,19 @@
 import json
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter
+
+
+ChatModelId = Literal[
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "chatgpt-5.5-official",
+    "chatgpt-5.4-az",
+    "claude-opus-4-7-official",
+    "claude-opus-4-6-aws",
+    "claude-sonnet-4-6-az",
+]
 
 
 class LoginRequest(BaseModel):
@@ -40,6 +52,25 @@ class ChatMessageInput(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessageInput]
+    model: ChatModelId = "deepseek-v4-flash"
+    conversationId: str | None = None
+    zipContextId: str | None = None
+
+
+class UploadZipResponse(BaseModel):
+    zipContextId: str
+    archiveName: str
+    entryCount: int
+    extractedEntryCount: int
+    inventoryOnlyCount: int
+    skippedEntryCount: int
+    supportedByCurrentModel: bool
+    unsupportedReason: str | None = None
+
+
+class UploadZipRequest(BaseModel):
+    conversationId: str
+    model: ChatModelId
 
 
 def parse_chat_request_json(raw: str) -> ChatRequest:
@@ -62,3 +93,4 @@ class MessageItem(BaseModel):
 
 class MessageList(BaseModel):
     items: list[MessageItem]
+
