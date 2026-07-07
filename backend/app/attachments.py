@@ -164,7 +164,9 @@ async def prepare_attachments(
     enable_native_vision: bool = False,
 ) -> PreparedAttachments:
     if len(files) > MAX_FILE_COUNT:
-        raise AttachmentError("Too many files. Maximum 10 files are allowed per request.")
+        raise AttachmentError(
+            f"Too many files. Maximum {MAX_FILE_COUNT} files are allowed per request."
+        )
 
     extracted: list[ExtractedAttachment] = []
     vision_images: list[VisionImageAttachment] = []
