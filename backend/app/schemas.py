@@ -10,22 +10,41 @@ ChatModelId = Literal[
     "deepseek-v4-pro",
     "chatgpt-5.5-official",
     "chatgpt-5.4-az",
+    "chatgpt-5.5-backup",
+    "chatgpt-5.4-backup",
     "claude-opus-4-7-official",
     "claude-opus-4-6-aws",
     "claude-sonnet-4-6-az",
+    "claude-opus-4-7-backup",
+    "claude-opus-4-6-backup",
+    "claude-sonnet-4-6-backup",
 ]
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    inviteCode: str
+
+
 class LoginRequest(BaseModel):
+    username: str
     password: str
 
 
-class AuthSuccess(BaseModel):
-    authenticated: bool
+class UserPayload(BaseModel):
+    id: int
+    username: str
+    isAdmin: bool
 
 
 class SessionStatus(BaseModel):
     authenticated: bool
+    user: UserPayload | None = None
+
+
+class AuthSuccess(SessionStatus):
+    pass
 
 
 class ConversationCreate(BaseModel):
@@ -55,6 +74,7 @@ class ChatRequest(BaseModel):
     model: ChatModelId = "deepseek-v4-flash"
     conversationId: str | None = None
     zipContextId: str | None = None
+    webSearch: bool = False
 
 
 class UploadZipResponse(BaseModel):

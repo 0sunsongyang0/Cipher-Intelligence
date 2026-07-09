@@ -12,22 +12,73 @@ import app.database as database_module
 import app.config as config_module
 from app.auth import COOKIE_NAME, hash_token
 from app.database import SessionLocal
-from app.models import Session as SessionModel, now_utc
+from app.models import InviteCode, Session as SessionModel, now_utc
 
 
-def login(client, password: str = "change-me", headers: dict[str, str] | None = None):
+def login(
+    client,
+    *,
+    username: str = "alice",
+    password: str = "StrongPass123!",
+    headers: dict[str, str] | None = None,
+):
     return client.post(
         "/api/auth/login",
-        json={"password": password},
+        json={"username": username, "password": password},
         headers=headers or {},
     )
 
 
-def test_login_sets_campus_session_cookie(client) -> None:
+def test_register_creates_user_consumes_invite_and_returns_authenticated_session(
+    client, create_invite_code
+) -> None:
+    create_invite_code(code="SMBU@2014520uu-", max_uses=3)
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": "alice",
+            "password": "StrongPass123!",
+            "inviteCode": "SMBU@2014520uu-",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["authenticated"] is True
+    assert response.json()["user"]["username"] == "alice"
+    assert "campus_session" in response.cookies
+
+    with SessionLocal() as db:
+        invite_code = db.execute(
+            select(InviteCode).where(InviteCode.code == "SMBU@2014520uu-")
+        ).scalar_one()
+        assert invite_code.used_count == 1
+
+
+def test_login_rejects_invalid_invite_or_credentials_paths(client, create_user) -> None:
+    invalid_invite = client.post(
+        "/api/auth/register",
+        json={"username": "alice", "password": "StrongPass123!", "inviteCode": "bad"},
+    )
+    assert invalid_invite.status_code == 400
+    assert invalid_invite.json() == {"detail": "Invite code is invalid"}
+
+    create_user(username="alice", password="StrongPass123!")
+    bad_login = client.post(
+        "/api/auth/login",
+        json={"username": "alice", "password": "wrong-password"},
+    )
+    assert bad_login.status_code == 401
+    assert bad_login.json() == {"detail": "Invalid username or password"}
+
+
+def test_login_sets_campus_session_cookie(client, create_user) -> None:
+    create_user(username="alice", password="StrongPass123!")
+
     response = login(client)
 
     assert response.status_code == 200
-    assert response.json() == {"authenticated": True}
+    assert response.json()["authenticated"] is True
     assert "campus_session" in response.cookies
 
 
@@ -116,7 +167,8 @@ def test_database_bootstrap_adds_user_and_invite_schema(monkeypatch) -> None:
 
 
 
-def test_login_sets_expected_cookie_attributes_for_test_env(client) -> None:
+def test_login_sets_expected_cookie_attributes_for_test_env(client, create_user) -> None:
+    create_user(username="alice", password="StrongPass123!")
     response = login(client)
 
     assert response.status_code == 200
@@ -132,10 +184,11 @@ def test_login_sets_expected_cookie_attributes_for_test_env(client) -> None:
     [("production", None), ("test", True)],
 )
 def test_login_sets_secure_cookie_when_enabled(
-    client, monkeypatch, app_env: str, session_cookie_secure: bool | None
+    client, monkeypatch, create_user, app_env: str, session_cookie_secure: bool | None
 ) -> None:
     monkeypatch.setattr(config_module.settings, "app_env", app_env)
     monkeypatch.setattr(config_module.settings, "session_cookie_secure", session_cookie_secure)
+    create_user(username="alice", password="StrongPass123!")
 
     response = login(client)
 
@@ -152,24 +205,39 @@ def test_unauthenticated_chat_page_redirects_to_public_gate(client) -> None:
 
 
 
-def test_session_status_reflects_login_and_logout(client) -> None:
+def test_session_status_returns_current_user_payload(client, create_user) -> None:
+    user = create_user(username="alice", password="StrongPass123!")
+    login_response = client.post(
+        "/api/auth/login",
+        json={"username": "alice", "password": "StrongPass123!"},
+    )
+    assert login_response.status_code == 200
+
+    response = client.get("/api/auth/session")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "authenticated": True,
+        "user": {"id": user.id, "username": "alice", "isAdmin": False},
+    }
+
+
+def test_logout_returns_unauthenticated_session_payload(client, create_user) -> None:
+    create_user(username="alice", password="StrongPass123!")
     login_response = login(client)
     assert login_response.status_code == 200
 
-    session_response = client.get("/api/auth/session")
-    assert session_response.status_code == 200
-    assert session_response.json() == {"authenticated": True}
-
     logout_response = client.post("/api/auth/logout")
     assert logout_response.status_code == 200
-    assert logout_response.json() == {"authenticated": False}
+    assert logout_response.json() == {"authenticated": False, "user": None}
 
     session_response = client.get("/api/auth/session")
     assert session_response.status_code == 200
-    assert session_response.json() == {"authenticated": False}
+    assert session_response.json() == {"authenticated": False, "user": None}
 
 
-def test_logout_revokes_access_to_authenticated_frontend_routes(client) -> None:
+def test_logout_revokes_access_to_authenticated_frontend_routes(client, create_user) -> None:
+    create_user(username="alice", password="StrongPass123!")
     login_response = login(client)
     assert login_response.status_code == 200
     assert client.get("/chat").status_code == 200
@@ -184,7 +252,8 @@ def test_logout_revokes_access_to_authenticated_frontend_routes(client) -> None:
 
 
 
-def test_logout_removes_server_side_session(client) -> None:
+def test_logout_removes_server_side_session(client, create_user) -> None:
+    create_user(username="alice", password="StrongPass123!")
     login_response = login(client)
     token = login_response.cookies[COOKIE_NAME]
 
@@ -206,7 +275,7 @@ def test_logout_removes_server_side_session(client) -> None:
     client.cookies.set(COOKIE_NAME, token)
     reused_cookie_response = client.get("/api/auth/session")
     assert reused_cookie_response.status_code == 200
-    assert reused_cookie_response.json() == {"authenticated": False}
+    assert reused_cookie_response.json() == {"authenticated": False, "user": None}
 
 
 
@@ -236,7 +305,8 @@ def test_expired_session_is_rejected(client) -> None:
 
 
 
-def test_login_returns_429_after_five_failed_attempts_for_same_client_host(client) -> None:
+def test_login_returns_429_after_five_failed_attempts_for_same_client_host(client, create_user) -> None:
+    create_user(username="alice", password="StrongPass123!")
     for attempt in range(5):
         response = login(
             client,
