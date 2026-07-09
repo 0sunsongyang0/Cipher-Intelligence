@@ -1,8 +1,14 @@
+import sqlite3
 from datetime import timedelta
+from pathlib import Path
+from shutil import rmtree
+from tempfile import mkdtemp
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
 
+import app.database as database_module
 import app.config as config_module
 from app.auth import COOKIE_NAME, hash_token
 from app.database import SessionLocal
@@ -25,23 +31,88 @@ def test_login_sets_campus_session_cookie(client) -> None:
     assert "campus_session" in response.cookies
 
 
-def test_database_bootstrap_adds_user_and_invite_schema(client) -> None:
-    from sqlalchemy import inspect
+def test_init_db_migrates_legacy_account_schema(monkeypatch) -> None:
+    base_dir = Path("backend/.pytest-tmp")
+    base_dir.mkdir(exist_ok=True)
+    temp_dir = Path(mkdtemp(dir=base_dir))
+    legacy_db_path = temp_dir / "legacy-account.db"
+    migration_engine = None
 
-    from app.database import engine
+    try:
+        with sqlite3.connect(legacy_db_path) as connection:
+            connection.execute(
+                """
+                CREATE TABLE sessions (
+                    id INTEGER PRIMARY KEY,
+                    token_hash VARCHAR(64) NOT NULL,
+                    expires_at DATETIME NOT NULL,
+                    created_at DATETIME NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE conversations (
+                    id INTEGER PRIMARY KEY,
+                    owner_session_id INTEGER NOT NULL DEFAULT 0,
+                    title VARCHAR(255) NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )
+                """
+            )
+            connection.commit()
 
-    inspector = inspect(engine)
+        migration_engine = create_engine(
+            f"sqlite:///{legacy_db_path}",
+            connect_args={"check_same_thread": False},
+        )
+        migration_session_local = sessionmaker(
+            bind=migration_engine,
+            autocommit=False,
+            autoflush=False,
+        )
 
-    assert "users" in inspector.get_table_names()
-    assert "invite_codes" in inspector.get_table_names()
+        monkeypatch.setattr(database_module, "engine", migration_engine)
+        monkeypatch.setattr(database_module, "SessionLocal", migration_session_local)
 
-    session_columns = {column["name"] for column in inspector.get_columns("sessions")}
-    conversation_columns = {
-        column["name"] for column in inspector.get_columns("conversations")
-    }
+        database_module.init_db()
 
-    assert "user_id" in session_columns
-    assert "owner_user_id" in conversation_columns
+        with sqlite3.connect(legacy_db_path) as connection:
+            table_names = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            assert "users" in table_names
+            assert "invite_codes" in table_names
+
+            session_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
+            }
+            assert "user_id" in session_columns
+
+            conversation_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
+            }
+            assert "owner_user_id" in conversation_columns
+
+            session_indexes = {
+                row[1] for row in connection.execute("PRAGMA index_list(sessions)").fetchall()
+            }
+            assert database_module.SESSION_USER_INDEX_NAME in session_indexes
+
+            conversation_indexes = {
+                row[1]
+                for row in connection.execute("PRAGMA index_list(conversations)").fetchall()
+            }
+            assert database_module.CONVERSATION_OWNER_USER_INDEX_NAME in conversation_indexes
+    finally:
+        if migration_engine is not None:
+            migration_engine.dispose()
+        rmtree(temp_dir, ignore_errors=True)
 
 
 
