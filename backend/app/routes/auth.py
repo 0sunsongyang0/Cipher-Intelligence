@@ -13,6 +13,8 @@ from app.auth import (
     get_invite_code_record,
     get_session_record,
     get_session_user,
+    validate_registration_password,
+    validate_registration_username,
     serialize_user,
 )
 from app.config import settings
@@ -40,6 +42,20 @@ def register(
     response: Response,
     db: Session = Depends(get_db),
 ) -> AuthSuccess:
+    username_error = validate_registration_username(db, payload.username)
+    if username_error is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=username_error,
+        )
+
+    password_error = validate_registration_password(payload.password)
+    if password_error is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=password_error,
+        )
+
     invite_code = get_invite_code_record(db, payload.inviteCode)
     if invite_code is None:
         raise HTTPException(

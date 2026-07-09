@@ -17,6 +17,7 @@ from app.schemas import UserPayload
 COOKIE_NAME = "campus_session"
 SESSION_TTL = timedelta(days=7)
 PASSWORD_HASH_ITERATIONS = 600_000
+MIN_PASSWORD_LENGTH = 8
 
 
 def hash_token(token: str) -> str:
@@ -91,6 +92,22 @@ def get_session_record(db: Session, token: str | None) -> SessionModel | None:
 
 def get_user_by_username(db: Session, username: str) -> User | None:
     return db.execute(select(User).where(User.username == username)).scalar_one_or_none()
+
+
+def validate_registration_username(db: Session, username: str) -> str | None:
+    if get_user_by_username(db, username) is not None:
+        return "Username is already taken"
+    return None
+
+
+def validate_registration_password(password: str) -> str | None:
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return "Password must be at least 8 characters and include letters and numbers"
+    if not any(character.isalpha() for character in password):
+        return "Password must be at least 8 characters and include letters and numbers"
+    if not any(character.isdigit() for character in password):
+        return "Password must be at least 8 characters and include letters and numbers"
+    return None
 
 
 def create_user_account(db: Session, *, username: str, password: str) -> User:

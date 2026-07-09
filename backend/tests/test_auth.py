@@ -72,6 +72,63 @@ def test_login_rejects_invalid_invite_or_credentials_paths(client, create_user) 
     assert bad_login.json() == {"detail": "Invalid username or password"}
 
 
+def test_register_rejects_duplicate_username(client, create_user, create_invite_code) -> None:
+    create_user(username="alice", password="StrongPass123!")
+    create_invite_code(code="SMBU@2014520uu-", max_uses=3)
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": "alice",
+            "password": "StrongPass123!",
+            "inviteCode": "SMBU@2014520uu-",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Username is already taken"}
+
+
+def test_register_rejects_weak_password(client, create_invite_code) -> None:
+    create_invite_code(code="SMBU@2014520uu-", max_uses=3)
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": "alice",
+            "password": "short",
+            "inviteCode": "SMBU@2014520uu-",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "Password must be at least 8 characters and include letters and numbers"
+    }
+
+
+def test_login_rejects_nonexistent_user(client) -> None:
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "missing-user", "password": "StrongPass123!"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid username or password"}
+
+
+def test_login_rejects_disabled_user(client, create_user) -> None:
+    create_user(username="alice", password="StrongPass123!", is_active=False)
+
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "alice", "password": "StrongPass123!"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid username or password"}
+
+
 def test_login_sets_campus_session_cookie(client, create_user) -> None:
     create_user(username="alice", password="StrongPass123!")
 
