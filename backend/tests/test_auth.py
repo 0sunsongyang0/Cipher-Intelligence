@@ -25,6 +25,25 @@ def test_login_sets_campus_session_cookie(client) -> None:
     assert "campus_session" in response.cookies
 
 
+def test_database_bootstrap_adds_user_and_invite_schema(client) -> None:
+    from sqlalchemy import inspect
+
+    from app.database import engine
+
+    inspector = inspect(engine)
+
+    assert "users" in inspector.get_table_names()
+    assert "invite_codes" in inspector.get_table_names()
+
+    session_columns = {column["name"] for column in inspector.get_columns("sessions")}
+    conversation_columns = {
+        column["name"] for column in inspector.get_columns("conversations")
+    }
+
+    assert "user_id" in session_columns
+    assert "owner_user_id" in conversation_columns
+
+
 
 def test_login_sets_expected_cookie_attributes_for_test_env(client) -> None:
     response = login(client)
