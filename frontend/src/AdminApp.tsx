@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Route, Routes, useNavigate } from "react-router-dom";
+import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { AuroraBackground } from "./components/AuroraBackground";
 import { checkSession, login, logout } from "./lib/api";
 import { AdminPage } from "./pages/AdminPage";
@@ -17,6 +17,25 @@ function isAuthenticatedAdminSession(
   session: SessionStatus
 ): session is SessionStatus & { authenticated: true; user: AuthUser & { isAdmin: true } } {
   return session.authenticated && session.user !== null && session.user.isAdmin;
+}
+
+function getAdminRootPath(pathname: string): string {
+  const segments = pathname.split("/").filter(Boolean);
+  const lastSegment = segments.at(-1);
+
+  if (!lastSegment) {
+    return "/";
+  }
+
+  if (!["services", "models", "files", "prompt"].includes(lastSegment)) {
+    return pathname;
+  }
+
+  if (segments.length === 1) {
+    return "/";
+  }
+
+  return `/${segments.slice(0, -1).join("/")}`;
 }
 
 function AdminLoginPage({
@@ -104,6 +123,7 @@ function AdminLoginPage({
 }
 
 export function AdminApp() {
+  const location = useLocation();
   const navigate = useNavigate();
   const [sessionKnown, setSessionKnown] = useState(false);
   const [sessionAuthenticated, setSessionAuthenticated] = useState(false);
@@ -173,7 +193,7 @@ export function AdminApp() {
       }
 
       applySession(session);
-      navigate("/", { replace: true });
+      navigate(getAdminRootPath(location.pathname), { replace: true });
     } catch (nextError) {
       setSessionAuthenticated(false);
       setViewer(null);
@@ -190,7 +210,7 @@ export function AdminApp() {
       await logout();
       setSessionAuthenticated(false);
       setViewer(null);
-      navigate("/", { replace: true });
+      navigate(getAdminRootPath(location.pathname), { replace: true });
     } catch (nextError) {
       setError(getErrorMessage(nextError));
     }

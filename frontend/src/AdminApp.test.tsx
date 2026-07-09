@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminApp } from "./AdminApp";
 import * as api from "./lib/api";
@@ -13,6 +13,12 @@ vi.mock("./lib/api", () => ({
   login: vi.fn(),
   logout: vi.fn(),
 }));
+
+function LocationProbe() {
+  const location = useLocation();
+
+  return <output data-testid="admin-location">{location.pathname}</output>;
+}
 
 describe("AdminApp", () => {
   beforeEach(() => {
@@ -103,5 +109,93 @@ describe("AdminApp", () => {
     expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("Admin access required");
     expect(screen.queryByRole("heading", { name: "后端管理" })).not.toBeInTheDocument();
+  });
+
+  it("keeps admin section links and section detection relative to a non-root mount path", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.checkSession).mockResolvedValue({
+      authenticated: true,
+      user: { id: 4, username: "admin", isAdmin: true },
+    });
+    vi.mocked(api.getAdminOverview).mockResolvedValue({
+      services: {
+        backend: { running: true, label: "running", detail: "Backend service is running." },
+        tunnel: { running: true, label: "running", detail: "Cloudflare tunnel is running." },
+        autostartEnabled: true,
+      },
+      access: {
+        localUrl: "http://127.0.0.1:8000/chat",
+        publicUrl: "https://[private-host]/chat",
+      },
+      models: {
+        providers: [{ provider: "DeepSeek", healthy: 2, total: 2 }],
+      },
+      files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 3 },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/admin.html/models"]}>
+        <AdminApp />
+        <LocationProbe />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole("heading", { name: "后端管理" })).toBeInTheDocument();
+    expect(await screen.findByText("DeepSeek")).toBeInTheDocument();
+    expect(screen.queryByText("http://127.0.0.1:8000/chat")).not.toBeInTheDocument();
+    expect(screen.getByTestId("admin-location")).toHaveTextContent("/admin.html/models");
+
+    await user.click(screen.getByRole("link", { name: "服务" }));
+
+    expect(await screen.findByText("http://127.0.0.1:8000/chat")).toBeInTheDocument();
+    expect(screen.getByTestId("admin-location")).toHaveTextContent("/admin.html/services");
+  });
+
+  it("keeps admin login and logout navigation on the non-root mount path", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.checkSession).mockResolvedValueOnce({
+      authenticated: false,
+      user: null,
+    });
+    vi.mocked(api.login).mockResolvedValue({
+      authenticated: true,
+      user: { id: 5, username: "admin", isAdmin: true },
+    });
+    vi.mocked(api.getAdminOverview).mockResolvedValue({
+      services: {
+        backend: { running: true, label: "running", detail: "Backend service is running." },
+        tunnel: { running: true, label: "running", detail: "Cloudflare tunnel is running." },
+        autostartEnabled: true,
+      },
+      access: {
+        localUrl: "http://127.0.0.1:8000/chat",
+        publicUrl: "https://[private-host]/chat",
+      },
+      models: {
+        providers: [{ provider: "DeepSeek", healthy: 2, total: 2 }],
+      },
+      files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 3 },
+    });
+    vi.mocked(api.logout).mockResolvedValue(undefined);
+
+    render(
+      <MemoryRouter initialEntries={["/admin.html"]}>
+        <AdminApp />
+        <LocationProbe />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
+    await user.type(document.getElementById("admin-username") as HTMLElement, "admin");
+    await user.type(document.getElementById("admin-password") as HTMLElement, "StrongPass123!");
+    await user.click(document.querySelector('button[type="submit"]') as HTMLElement);
+
+    expect(await screen.findByRole("heading", { name: "后端管理" })).toBeInTheDocument();
+    expect(screen.getByTestId("admin-location")).toHaveTextContent("/admin.html");
+
+    await user.click(screen.getAllByRole("button")[1]!);
+
+    expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
+    expect(screen.getByTestId("admin-location")).toHaveTextContent("/admin.html");
   });
 });
