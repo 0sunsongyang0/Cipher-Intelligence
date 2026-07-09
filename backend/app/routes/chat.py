@@ -7,7 +7,6 @@ from fastapi.encoders import jsonable_encoder
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
-from sqlalchemy.orm import Session
 
 from app.attachments import (
     AttachmentError,
@@ -17,12 +16,9 @@ from app.attachments import (
     prepare_attachments,
 )
 from app.auth import require_user_session
-from app.database import get_db
 from app.deepseek import DeepSeekConfigurationError, stream_chat_completion
 from app.models import Session as SessionModel
-from app.search_chat import stream_search_chat
 from app.schemas import ChatRequest, parse_chat_request_json
-from app.web_search import WebSearchConfigurationError, WebSearchUpstreamError
 from app.zip_context_store import get_zip_model_support, zip_context_store
 
 
@@ -30,6 +26,22 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 MISSING_ZIP_CONTEXT_ERROR = "ZIP \u4e0a\u4e0b\u6587\u4e0d\u5b58\u5728\u6216\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u4e0a\u4f20\u538b\u7f29\u5305\u3002"
+
+
+def build_chat_stream(
+    messages: list[dict[str, Any]],
+    model: str,
+):
+    stream_signature = inspect.signature(stream_chat_completion)
+    accepts_model = len(stream_signature.parameters) > 1 or any(
+        parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        for parameter in stream_signature.parameters.values()
+    )
+
+    if accepts_model:
+        return stream_chat_completion(messages, model)
+
+    return stream_chat_completion(messages)
 
 
 def prefix_validation_error_locations(errors: list[dict]) -> list[dict]:
@@ -207,10 +219,7 @@ async def chat(
             )
         zip_context_block = build_zip_context_block(
             stored_zip_context.archive_name,
-            zip_context_store.build_attachment_block_for_model(
-                stored_zip_context,
-                model=payload.model,
-            ),
+            stored_zip_context.attachment_block,
             stored_zip_context.inventory_block,
         )
         zip_context_vision_images = [*stored_zip_context.vision_images]
@@ -240,10 +249,9 @@ async def chat(
             attachment_block = build_attachment_block(extracted_attachments)
             message_history = attach_block_to_messages(message_history, attachment_block)
             message_history = attach_block_to_messages(message_history, zip_context_block)
-        stream = stream_search_chat(
-            messages=message_history,
-            model=payload.model,
-            web_search=payload.webSearch,
+        stream = build_chat_stream(
+            message_history,
+            payload.model,
         )
         first_chunk = await anext(stream)
     except StopAsyncIteration:
@@ -256,16 +264,6 @@ async def chat(
     except DeepSeekConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    except WebSearchConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    except WebSearchUpstreamError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
     except Exception as exc:

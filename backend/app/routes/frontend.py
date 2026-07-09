@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from starlette.routing import Match
 from sqlalchemy.orm import Session
 
+from app.admin_access import assert_local_admin_request
 from app.auth import COOKIE_NAME, get_session_record
 from app.database import get_db
 
@@ -13,7 +14,6 @@ router = APIRouter(tags=["frontend"], include_in_schema=False)
 FRONTEND_DIST_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 FRONTEND_INDEX_PATH = FRONTEND_DIST_DIR / "index.html"
 FRONTEND_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
-FRONTEND_FILE_ICONS_DIR = FRONTEND_DIST_DIR / "file-icons"
 SPA_SHELL_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
@@ -68,6 +68,29 @@ def serve_authenticated_chat_entry(
     if session is None or session.user_id is None:
         return RedirectResponse(url="/", status_code=307)
 
+    return serve_spa_shell()
+
+
+@router.get("/admin", response_model=None)
+def serve_admin_entry(request: Request, db: Session = Depends(get_db)) -> Response:
+    session = get_session_record(db, request.cookies.get(COOKIE_NAME))
+    if session is None:
+        return RedirectResponse(url="/", status_code=307)
+
+    assert_local_admin_request(request)
+    return serve_spa_shell()
+
+
+@router.get("/admin/{admin_path:path}", response_model=None)
+def serve_admin_nested_path(
+    admin_path: str, request: Request, db: Session = Depends(get_db)
+) -> Response:
+    del admin_path
+    session = get_session_record(db, request.cookies.get(COOKIE_NAME))
+    if session is None:
+        return RedirectResponse(url="/", status_code=307)
+
+    assert_local_admin_request(request)
     return serve_spa_shell()
 
 

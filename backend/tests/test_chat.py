@@ -45,7 +45,6 @@ from app.rate_limit import reset_failed_attempts
 from app.routes.chat import router as chat_router
 from app.routes.frontend import (
     FRONTEND_ASSETS_DIR,
-    FRONTEND_FILE_ICONS_DIR,
     router as frontend_router,
 )
 from app.routes.upload_zip import router as upload_zip_router
@@ -150,14 +149,6 @@ def chat_client():
         from fastapi.staticfiles import StaticFiles
 
         app.mount("/assets", StaticFiles(directory=FRONTEND_ASSETS_DIR), name="frontend-assets")
-    if FRONTEND_FILE_ICONS_DIR.is_dir():
-        from fastapi.staticfiles import StaticFiles
-
-        app.mount(
-            "/file-icons",
-            StaticFiles(directory=FRONTEND_FILE_ICONS_DIR),
-            name="frontend-file-icons",
-        )
     app.include_router(frontend_router)
 
     with TestClient(app) as test_client:
@@ -1085,9 +1076,8 @@ def test_chat_appends_zip_inventory_context_to_last_user_message(chat_client, mo
     assert upload_response.status_code == 200
     zip_context_id = upload_response.json()["zipContextId"]
 
-    async def fake_stream_search_chat(*, messages, model, web_search):
+    async def fake_stream_chat_completion(messages, model=None):
         assert model == "deepseek-v4-flash"
-        assert web_search is False
         assert messages[-1]["role"] == "user"
         assert messages[-1]["content"].startswith("Please compare both contexts")
         assert "attachment body text" in messages[-1]["content"]
@@ -1101,8 +1091,8 @@ def test_chat_appends_zip_inventory_context_to_last_user_message(chat_client, mo
         yield "ok"
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -1138,9 +1128,8 @@ def test_chat_allows_zip_context_for_openai_model(chat_client, monkeypatch) -> N
     assert upload_response.status_code == 200
     zip_context_id = upload_response.json()["zipContextId"]
 
-    async def fake_stream_search_chat(*, messages, model, web_search):
+    async def fake_stream_chat_completion(messages, model=None):
         assert model == "chatgpt-5.5-official"
-        assert web_search is False
         assert messages[-1]["role"] == "user"
         assert messages[-1]["content"].startswith("hello")
         assert "[ZIP context]\nArchive: notes.zip\n\n" in messages[-1]["content"]
@@ -1148,8 +1137,8 @@ def test_chat_allows_zip_context_for_openai_model(chat_client, monkeypatch) -> N
         yield "openai-ok"
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -1182,9 +1171,8 @@ def test_chat_allows_zip_context_for_claude_model(chat_client, monkeypatch) -> N
     assert upload_response.status_code == 200
     zip_context_id = upload_response.json()["zipContextId"]
 
-    async def fake_stream_search_chat(*, messages, model, web_search):
+    async def fake_stream_chat_completion(messages, model=None):
         assert model == "claude-opus-4-7-official"
-        assert web_search is False
         assert messages[-1]["role"] == "user"
         assert messages[-1]["content"].startswith("hello")
         assert "[ZIP context]\nArchive: notes.zip\n\n" in messages[-1]["content"]
@@ -1192,8 +1180,8 @@ def test_chat_allows_zip_context_for_claude_model(chat_client, monkeypatch) -> N
         yield "claude-ok"
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -1231,9 +1219,8 @@ def test_chat_reuses_stored_zip_images_for_openai_model(chat_client, monkeypatch
     assert upload_response.status_code == 200
     zip_context_id = upload_response.json()["zipContextId"]
 
-    async def fake_stream_search_chat(*, messages, model, web_search):
+    async def fake_stream_chat_completion(messages, model=None):
         assert model == "chatgpt-5.5-official"
-        assert web_search is False
         assert isinstance(messages[-1]["content"], list)
         assert messages[-1]["content"][0]["type"] == "text"
         assert "[ZIP context]" in messages[-1]["content"][0]["text"]
@@ -1244,8 +1231,8 @@ def test_chat_reuses_stored_zip_images_for_openai_model(chat_client, monkeypatch
         yield "openai-zip-image-ok"
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -1282,9 +1269,8 @@ def test_chat_reuses_stored_zip_images_for_claude_model(chat_client, monkeypatch
     )
     assert upload_response.status_code == 200
     zip_context_id = upload_response.json()["zipContextId"]
-    async def fake_stream_search_chat(*, messages, model, web_search):
+    async def fake_stream_chat_completion(messages, model=None):
         assert model == "claude-opus-4-7-official"
-        assert web_search is False
         assert isinstance(messages[-1]["content"], list)
         assert messages[-1]["content"][0]["type"] == "text"
         assert "[ZIP context]" in messages[-1]["content"][0]["text"]
@@ -1296,8 +1282,8 @@ def test_chat_reuses_stored_zip_images_for_claude_model(chat_client, monkeypatch
         yield "claude-zip-image-ok"
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -1334,9 +1320,8 @@ def test_chat_skips_unreadable_zip_images_for_claude_model(chat_client, monkeypa
     )
     assert upload_response.status_code == 200
     zip_context_id = upload_response.json()["zipContextId"]
-    async def fake_stream_search_chat(*, messages, model, web_search):
+    async def fake_stream_chat_completion(messages, model=None):
         assert model == "claude-opus-4-7-official"
-        assert web_search is False
         assert isinstance(messages[-1]["content"], list)
         assert messages[-1]["content"][0]["type"] == "text"
         assert "kept text" in messages[-1]["content"][0]["text"]
@@ -1347,8 +1332,8 @@ def test_chat_skips_unreadable_zip_images_for_claude_model(chat_client, monkeypa
         yield "claude-zip-image-fallback-ok"
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -1389,17 +1374,16 @@ def test_chat_reuses_eagerly_extracted_zip_image_ocr_for_deepseek_follow_up(
     assert upload_response.status_code == 200
     zip_context_id = upload_response.json()["zipContextId"]
 
-    async def fake_stream_search_chat(*, messages, model, web_search):
+    async def fake_stream_chat_completion(messages, model=None):
         assert model == "deepseek-v4-flash"
-        assert web_search is False
         assert isinstance(messages[-1]["content"], str)
         assert "[ZIP context]" in messages[-1]["content"]
         assert "zip image body text" in messages[-1]["content"]
         yield "deepseek-zip-image-ok"
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -1478,7 +1462,7 @@ def test_chat_streams_plain_text_response_for_authenticated_session(chat_client,
         yield " campus"
 
     monkeypatch.setattr(
-        "app.search_chat.stream_chat_completion",
+        "app.routes.chat.stream_chat_completion",
         fake_stream_chat_completion,
     )
 
@@ -1507,7 +1491,7 @@ def test_primary_app_mounts_server_chat_route(client, monkeypatch) -> None:
         yield "ok"
 
     monkeypatch.setattr(
-        "app.search_chat.stream_chat_completion",
+        "app.routes.chat.stream_chat_completion",
         fake_stream_chat_completion,
     )
 
@@ -1535,7 +1519,7 @@ def test_chat_uses_saved_prompt_override(chat_client, monkeypatch, tmp_path) -> 
         yield "override-ok"
 
     monkeypatch.setattr(
-        "app.search_chat.stream_chat_completion",
+        "app.routes.chat.stream_chat_completion",
         fake_stream_chat_completion,
     )
 
@@ -2303,7 +2287,7 @@ def test_chat_forwards_message_history_exactly_as_provided(chat_client, monkeypa
         yield "done"
 
     monkeypatch.setattr(
-        "app.search_chat.stream_chat_completion",
+        "app.routes.chat.stream_chat_completion",
         fake_stream_chat_completion,
     )
 
@@ -2334,7 +2318,7 @@ def test_chat_still_accepts_plain_json_without_files(chat_client, monkeypatch) -
         yield "plain-ok"
 
     monkeypatch.setattr(
-        "app.search_chat.stream_chat_completion",
+        "app.routes.chat.stream_chat_completion",
         fake_stream_chat_completion,
     )
 
@@ -2345,63 +2329,6 @@ def test_chat_still_accepts_plain_json_without_files(chat_client, monkeypatch) -
 
     assert response.status_code == 200
     assert response.text == "plain-ok"
-
-
-def test_chat_forwards_requested_model_to_stream_completion(chat_client, monkeypatch) -> None:
-    login(chat_client)
-
-    async def fake_stream_search_chat(*, messages, model, web_search):
-        assert messages == [
-            {"role": "user", "content": "search this"},
-        ]
-        assert model == "deepseek-v4-flash"
-        assert web_search is False
-        yield "search-ok"
-
-    monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
-    )
-
-    response = chat_client.post(
-        "/api/chat",
-        json={
-            "model": "deepseek-v4-flash",
-            "messages": [{"role": "user", "content": "search this"}],
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.text == "search-ok"
-
-
-
-def test_chat_forwards_requested_model_in_multipart_requests(chat_client, monkeypatch) -> None:
-    login(chat_client)
-
-    async def fake_stream_search_chat(*, messages, model, web_search):
-        assert model == "deepseek-v4-flash"
-        assert web_search is False
-        assert messages[-1]["content"].startswith("search this attachment")
-        yield "multipart-search-ok"
-
-    monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
-    )
-
-    response = chat_client.post(
-        "/api/chat",
-        data={
-            "messages": "{\"model\":\"deepseek-v4-flash\",\"messages\":[{\"role\":\"user\",\"content\":\"search this attachment\"}]}",
-        },
-        files={
-            "files": ("notes.txt", b"alpha file content", "text/plain"),
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.text == "multipart-search-ok"
 
 
 def test_chat_rejects_malformed_json_body_with_controlled_error(chat_client) -> None:
@@ -2447,7 +2374,7 @@ def test_chat_accepts_multipart_messages_with_text_attachment(chat_client, monke
         yield "ok"
 
     monkeypatch.setattr(
-        "app.search_chat.stream_chat_completion",
+        "app.routes.chat.stream_chat_completion",
         fake_stream_chat_completion,
     )
 
@@ -2469,16 +2396,15 @@ def test_chat_includes_pdf_attachment_text_in_last_user_message(chat_client, mon
     login(chat_client)
     monkeypatch.setattr("app.attachments.extract_pdf_text", lambda _raw: "pdf body text")
 
-    async def fake_stream_search_chat(*, messages, model, web_search):
+    async def fake_stream_chat_completion(messages, model=None):
         assert model == "deepseek-v4-flash"
-        assert web_search is False
         assert "report.pdf" in messages[-1]["content"]
         assert "pdf body text" in messages[-1]["content"]
         yield "ok"
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -2495,16 +2421,15 @@ def test_chat_includes_docx_attachment_text_in_last_user_message(chat_client, mo
     login(chat_client)
     monkeypatch.setattr("app.attachments.extract_docx_text", lambda _raw: "docx body text")
 
-    async def fake_stream_search_chat(*, messages, model, web_search):
+    async def fake_stream_chat_completion(messages, model=None):
         assert model == "deepseek-v4-flash"
-        assert web_search is False
         assert "doc.docx" in messages[-1]["content"]
         assert "docx body text" in messages[-1]["content"]
         yield "ok"
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -2555,7 +2480,7 @@ def test_chat_uses_native_vision_payload_for_chatgpt_image_attachments(
         yield "vision-ok"
 
     monkeypatch.setattr(
-        "app.search_chat.stream_chat_completion",
+        "app.routes.chat.stream_chat_completion",
         fake_stream_chat_completion,
     )
 
@@ -2591,7 +2516,7 @@ def test_chat_uses_native_vision_payload_for_claude_image_attachments(
         yield "claude-vision-ok"
 
     monkeypatch.setattr(
-        "app.search_chat.stream_chat_completion",
+        "app.routes.chat.stream_chat_completion",
         fake_stream_chat_completion,
     )
 
@@ -2611,9 +2536,8 @@ def test_chat_keeps_ocr_flow_for_deepseek_image_attachments(chat_client, monkeyp
     login(chat_client)
     monkeypatch.setattr("app.attachments.extract_image_text", lambda _raw: "OCR text")
 
-    async def fake_stream_search_chat(*, messages, model, web_search):
+    async def fake_stream_chat_completion(messages, model=None):
         assert model == "deepseek-v4-flash"
-        assert web_search is False
         assert messages[-1]["role"] == "user"
         assert isinstance(messages[-1]["content"], str)
         assert "[Attached files]" in messages[-1]["content"]
@@ -2622,8 +2546,8 @@ def test_chat_keeps_ocr_flow_for_deepseek_image_attachments(chat_client, monkeyp
         yield "deepseek-ok"
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -2696,17 +2620,16 @@ def test_chat_rejects_more_than_ten_files(chat_client) -> None:
 def test_chat_surfaces_upstream_errors_for_authenticated_session(chat_client, monkeypatch) -> None:
     login(chat_client)
 
-    async def failing_stream_search_chat(*, messages, model, web_search):
+    async def failing_stream_chat_completion(messages, model=None):
         assert model == "deepseek-v4-flash"
-        assert web_search is False
         if messages:
             pass
         raise RuntimeError("DeepSeek upstream returned 401 Unauthorized")
         yield
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        failing_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        failing_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -2723,13 +2646,13 @@ def test_chat_surfaces_synchronous_upstream_errors_for_authenticated_session(
 ) -> None:
     login(chat_client)
 
-    def failing_stream_search_chat(*, messages, model, web_search):
-        del messages, model, web_search
+    def failing_stream_chat_completion(messages, model=None):
+        del messages, model
         raise RuntimeError("DeepSeek request setup failed")
 
     monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        failing_stream_search_chat,
+        "app.routes.chat.stream_chat_completion",
+        failing_stream_chat_completion,
     )
 
     response = chat_client.post(
@@ -2741,52 +2664,6 @@ def test_chat_surfaces_synchronous_upstream_errors_for_authenticated_session(
     assert response.json() == {"detail": "DeepSeek request setup failed"}
 
 
-def test_chat_forwards_web_search_flag_to_search_runtime(chat_client, monkeypatch) -> None:
-    login(chat_client)
-
-    async def fake_stream_search_chat(*, messages, model, web_search):
-        assert messages == [{"role": "user", "content": "latest ai news"}]
-        assert model == "deepseek-v4-flash"
-        assert web_search is True
-        yield "web-search-on"
-
-    monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
-    )
-
-    response = chat_client.post(
-        "/api/chat",
-        json={
-            "model": "deepseek-v4-flash",
-            "webSearch": True,
-            "messages": [{"role": "user", "content": "latest ai news"}],
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.text == "web-search-on"
-
-
-def test_chat_stream_preserves_emoji_for_authenticated_session(chat_client, monkeypatch) -> None:
-    login(chat_client)
-
-    async def fake_stream_search_chat(*, messages, model, web_search):
-        del messages, model, web_search
-        yield "你好🙂"
-
-    monkeypatch.setattr(
-        "app.routes.chat.stream_search_chat",
-        fake_stream_search_chat,
-    )
-
-    response = chat_client.post(
-        "/api/chat",
-        json={"messages": [{"role": "user", "content": "hello"}]},
-    )
-
-    assert response.status_code == 200
-    assert response.text == "你好🙂"
 
 
 
