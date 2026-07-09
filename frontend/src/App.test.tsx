@@ -71,6 +71,22 @@ describe("App", () => {
     expect(screen.queryByRole("heading", { name: "Cipher AI" })).not.toBeInTheDocument();
   });
 
+  it("rejects inconsistent unauthenticated sessions even when a user payload is present", async () => {
+    vi.mocked(api.checkSession).mockResolvedValue({
+      authenticated: false,
+      user: { id: 9, username: "alice", isAdmin: false },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByLabelText("用户名")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Cipher AI" })).not.toBeInTheDocument();
+  });
+
   it("submits username and password for login and redirects to chat", async () => {
     const user = userEvent.setup();
     vi.mocked(api.checkSession).mockResolvedValue({ authenticated: false, user: null });

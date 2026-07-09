@@ -4,7 +4,7 @@ import { AuthGuard } from "./components/AuthGuard";
 import { AppShell } from "./components/webllm/AppShell";
 import { checkSession, login, logout, register } from "./lib/api";
 import { LoginPage, type AuthMode } from "./pages/LoginPage";
-import type { AuthUser } from "./types";
+import type { AuthUser, SessionStatus } from "./types";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) {
@@ -14,14 +14,24 @@ function getErrorMessage(error: unknown): string {
   return "登录失败，请稍后重试。";
 }
 
+function isAuthenticatedUserSession(session: SessionStatus): session is SessionStatus & { authenticated: true; user: AuthUser } {
+  return session.authenticated && session.user !== null;
+}
+
 export function App() {
   const navigate = useNavigate();
   const [sessionKnown, setSessionKnown] = useState(false);
+  const [sessionAuthenticated, setSessionAuthenticated] = useState(false);
   const [viewer, setViewer] = useState<AuthUser | null>(null);
   const [mode, setMode] = useState<AuthMode>("login");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const authenticated = viewer !== null;
+  const authenticated = sessionAuthenticated && viewer !== null;
+
+  function applySession(session: SessionStatus) {
+    setSessionAuthenticated(session.authenticated);
+    setViewer(session.user);
+  }
 
   useEffect(() => {
     let active = true;
@@ -33,12 +43,13 @@ export function App() {
           return;
         }
 
-        setViewer(session.user);
+        applySession(session);
       } catch {
         if (!active) {
           return;
         }
 
+        setSessionAuthenticated(false);
         setViewer(null);
       } finally {
         if (active) {
@@ -60,9 +71,15 @@ export function App() {
 
     try {
       const session = await login(credentials);
-      setViewer(session.user);
+      applySession(session);
+
+      if (!isAuthenticatedUserSession(session)) {
+        return;
+      }
+
       navigate("/chat", { replace: true });
     } catch (nextError) {
+      setSessionAuthenticated(false);
       setViewer(null);
       setError(getErrorMessage(nextError));
     } finally {
@@ -90,9 +107,15 @@ export function App() {
         password: payload.password,
         inviteCode: payload.inviteCode,
       });
-      setViewer(session.user);
+      applySession(session);
+
+      if (!isAuthenticatedUserSession(session)) {
+        return;
+      }
+
       navigate("/chat", { replace: true });
     } catch (nextError) {
+      setSessionAuthenticated(false);
       setViewer(null);
       setError(getErrorMessage(nextError));
     } finally {
@@ -105,6 +128,7 @@ export function App() {
 
     try {
       await logout();
+      setSessionAuthenticated(false);
       setViewer(null);
       navigate("/", { replace: true });
     } catch (nextError) {

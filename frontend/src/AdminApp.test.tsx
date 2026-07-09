@@ -52,7 +52,9 @@ describe("AdminApp", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "后端管理" })).toBeInTheDocument();
-    expect(api.getAdminOverview).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(api.getAdminOverview).toHaveBeenCalledTimes(1);
+    });
 
     await user.click(screen.getByRole("link", { name: "模型" }));
 
@@ -67,5 +69,39 @@ describe("AdminApp", () => {
       expect(screen.getByText("访问状态")).toBeInTheDocument();
     });
     expect(api.getAdminOverview).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects non-admin users and keeps them on the admin login page", async () => {
+    vi.mocked(api.checkSession).mockResolvedValue({
+      authenticated: true,
+      user: { id: 2, username: "alice", isAdmin: false },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AdminApp />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Admin access required");
+    expect(screen.queryByRole("heading", { name: "后端管理" })).not.toBeInTheDocument();
+  });
+
+  it("rejects inconsistent unauthenticated admin sessions even with a user payload", async () => {
+    vi.mocked(api.checkSession).mockResolvedValue({
+      authenticated: false,
+      user: { id: 3, username: "admin", isAdmin: true },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AdminApp />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Admin access required");
+    expect(screen.queryByRole("heading", { name: "后端管理" })).not.toBeInTheDocument();
   });
 });

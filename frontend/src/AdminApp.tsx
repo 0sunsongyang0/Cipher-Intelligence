@@ -3,7 +3,7 @@ import { Route, Routes, useNavigate } from "react-router-dom";
 import { AuroraBackground } from "./components/AuroraBackground";
 import { checkSession, login, logout } from "./lib/api";
 import { AdminPage } from "./pages/AdminPage";
-import type { AuthUser } from "./types";
+import type { AuthUser, SessionStatus } from "./types";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) {
@@ -11,6 +11,12 @@ function getErrorMessage(error: unknown): string {
   }
 
   return "登录失败，请稍后重试。";
+}
+
+function isAuthenticatedAdminSession(
+  session: SessionStatus
+): session is SessionStatus & { authenticated: true; user: AuthUser & { isAdmin: true } } {
+  return session.authenticated && session.user !== null && session.user.isAdmin;
 }
 
 function AdminLoginPage({
@@ -100,10 +106,22 @@ function AdminLoginPage({
 export function AdminApp() {
   const navigate = useNavigate();
   const [sessionKnown, setSessionKnown] = useState(false);
+  const [sessionAuthenticated, setSessionAuthenticated] = useState(false);
   const [viewer, setViewer] = useState<AuthUser | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const authenticated = viewer !== null;
+  const authenticated = sessionAuthenticated && viewer !== null && viewer.isAdmin;
+
+  function applySession(session: SessionStatus) {
+    setSessionAuthenticated(session.authenticated);
+    setViewer(session.user);
+  }
+
+  function rejectAdminSession() {
+    setSessionAuthenticated(false);
+    setViewer(null);
+    setError("Admin access required");
+  }
 
   useEffect(() => {
     let active = true;
@@ -115,12 +133,18 @@ export function AdminApp() {
           return;
         }
 
-        setViewer(session.user);
+        if (!isAuthenticatedAdminSession(session)) {
+          rejectAdminSession();
+          return;
+        }
+
+        applySession(session);
       } catch (nextError) {
         if (!active) {
           return;
         }
 
+        setSessionAuthenticated(false);
         setViewer(null);
         setError(getErrorMessage(nextError));
       } finally {
@@ -143,9 +167,15 @@ export function AdminApp() {
 
     try {
       const session = await login(credentials);
-      setViewer(session.user);
+      if (!isAuthenticatedAdminSession(session)) {
+        rejectAdminSession();
+        return;
+      }
+
+      applySession(session);
       navigate("/", { replace: true });
     } catch (nextError) {
+      setSessionAuthenticated(false);
       setViewer(null);
       setError(getErrorMessage(nextError));
     } finally {
@@ -158,6 +188,7 @@ export function AdminApp() {
 
     try {
       await logout();
+      setSessionAuthenticated(false);
       setViewer(null);
       navigate("/", { replace: true });
     } catch (nextError) {
