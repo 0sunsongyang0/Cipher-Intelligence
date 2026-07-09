@@ -204,3 +204,22 @@ def require_user_session(
             detail="User authentication required",
         )
     return session
+
+
+def require_admin_user_session(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> SessionModel:
+    session = require_user_session(request, db)
+    user = get_session_user(db, session)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User authentication required",
+        )
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return session

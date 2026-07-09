@@ -47,6 +47,28 @@ class AuthSuccess(SessionStatus):
     pass
 
 
+class AdminInviteItem(BaseModel):
+    id: int
+    code: str
+    label: str
+    isActive: bool
+    maxUses: int | None
+    usedCount: int
+    expiresAt: datetime | None
+    createdAt: datetime
+
+
+class AdminInviteListResponse(BaseModel):
+    items: list[AdminInviteItem]
+
+
+class AdminInviteCreateRequest(BaseModel):
+    code: str
+    label: str = ""
+    maxUses: int | None = None
+    expiresAt: datetime | None = None
+
+
 class ConversationCreate(BaseModel):
     title: str
 
