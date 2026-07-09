@@ -24,7 +24,7 @@ vi.mock("./components/webllm/AppShell", () => ({
       <h1>Cipher AI</h1>
       {sessionError ? <p role="alert">{sessionError}</p> : null}
       <button type="button" onClick={() => void onLogout()}>
-        退出登录
+        Log out
       </button>
     </div>
   ),
@@ -55,7 +55,7 @@ describe("App", () => {
 
     resolveSession?.({ authenticated: false, user: null });
 
-    expect(await screen.findByLabelText("用户名")).toBeInTheDocument();
+    expect(await screen.findByTestId("login-shell-card")).toBeInTheDocument();
   });
 
   it("does not treat anonymous legacy sessions as authenticated", async () => {
@@ -67,7 +67,7 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByLabelText("用户名")).toBeInTheDocument();
+    expect(await screen.findByTestId("login-shell-card")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Cipher AI" })).not.toBeInTheDocument();
   });
 
@@ -83,7 +83,21 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByLabelText("用户名")).toBeInTheDocument();
+    expect(await screen.findByTestId("login-shell-card")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Cipher AI" })).not.toBeInTheDocument();
+  });
+
+  it("shows an auth-screen error when restoring the session fails", async () => {
+    vi.mocked(api.checkSession).mockRejectedValue(new Error("session backend unavailable"));
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("session backend unavailable");
+    expect(screen.getByTestId("login-shell-card")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Cipher AI" })).not.toBeInTheDocument();
   });
 
@@ -101,9 +115,10 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    await user.type(await screen.findByLabelText("用户名"), "alice");
-    await user.type(screen.getByLabelText("密码"), "StrongPass123!");
-    await user.click(screen.getAllByRole("button", { name: "登录" })[1]!);
+    await screen.findByTestId("login-shell-card");
+    await user.type(document.getElementById("login-username") as HTMLElement, "alice");
+    await user.type(document.getElementById("login-password") as HTMLElement, "StrongPass123!");
+    await user.click(document.querySelector('button[type="submit"]') as HTMLElement);
 
     expect(api.login).toHaveBeenCalledWith({
       username: "alice",
@@ -151,12 +166,13 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    await user.click(await screen.findByRole("button", { name: "注册" }));
-    await user.type(screen.getByLabelText("用户名"), "new-user");
-    await user.type(screen.getByLabelText("密码"), "StrongPass123!");
-    await user.type(screen.getByLabelText("确认密码"), "StrongPass123!");
-    await user.type(screen.getByLabelText("邀请码"), "SMBU@2014520uu-");
-    await user.click(screen.getByRole("button", { name: "创建账号" }));
+    await screen.findByTestId("login-shell-card");
+    await user.click(screen.getAllByRole("button")[1]!);
+    await user.type(document.getElementById("register-username") as HTMLElement, "new-user");
+    await user.type(document.getElementById("register-password") as HTMLElement, "StrongPass123!");
+    await user.type(document.getElementById("register-confirm-password") as HTMLElement, "StrongPass123!");
+    await user.type(document.getElementById("register-invite-code") as HTMLElement, "SMBU@2014520uu-");
+    await user.click(document.querySelector('button[type="submit"]') as HTMLElement);
 
     expect(api.register).toHaveBeenCalledWith({
       username: "new-user",
@@ -223,9 +239,30 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    await user.click(await screen.findByRole("button", { name: "退出登录" }));
+    await user.click(await screen.findByRole("button", { name: "Log out" }));
 
     expect(api.logout).toHaveBeenCalledTimes(1);
-    expect(await screen.findByLabelText("用户名")).toBeInTheDocument();
+    expect(await screen.findByTestId("login-shell-card")).toBeInTheDocument();
+  });
+
+  it("keeps the user in chat and shows an error when logout fails", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.checkSession).mockResolvedValue({
+      authenticated: true,
+      user: { id: 6, username: "alice", isAdmin: false },
+    });
+    vi.mocked(api.logout).mockRejectedValue(new Error("logout failed"));
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Log out" }));
+
+    expect(api.logout).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("alert")).toHaveTextContent("logout failed");
+    expect(screen.getByRole("heading", { name: "Cipher AI" })).toBeInTheDocument();
   });
 });

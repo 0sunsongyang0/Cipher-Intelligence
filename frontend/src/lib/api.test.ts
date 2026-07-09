@@ -249,6 +249,122 @@ describe("api auth helpers", () => {
       credentials: "include"
     });
   });
+
+  it("loads the admin prompt with credentials", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          prompt: "Default prompt",
+          source: "default",
+          updatedAt: null,
+          status: "ready",
+          message: "Prompt loaded"
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(api.getAdminPrompt()).resolves.toEqual({
+      prompt: "Default prompt",
+      source: "default",
+      updatedAt: null,
+      status: "ready",
+      message: "Prompt loaded"
+    });
+    expect(fetchSpy).toHaveBeenCalledWith("/api/admin/prompt", {
+      credentials: "include"
+    });
+  });
+
+  it("posts prompt saves with credentials and json body", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          prompt: "Saved prompt",
+          source: "override",
+          updatedAt: "2026-07-09T10:00:00Z",
+          status: "ready",
+          message: "Prompt saved"
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(api.saveAdminPrompt("Saved prompt")).resolves.toEqual({
+      ok: true,
+      prompt: "Saved prompt",
+      source: "override",
+      updatedAt: "2026-07-09T10:00:00Z",
+      status: "ready",
+      message: "Prompt saved"
+    });
+    expect(fetchSpy).toHaveBeenCalledWith("/api/admin/prompt", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ prompt: "Saved prompt" })
+    });
+  });
+
+  it("posts prompt reset requests with credentials", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          prompt: "Default prompt",
+          source: "default",
+          updatedAt: null,
+          status: "ready",
+          message: "Prompt reset"
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(api.resetAdminPrompt()).resolves.toEqual({
+      ok: true,
+      prompt: "Default prompt",
+      source: "default",
+      updatedAt: null,
+      status: "ready",
+      message: "Prompt reset"
+    });
+    expect(fetchSpy).toHaveBeenCalledWith("/api/admin/prompt/reset", {
+      method: "POST",
+      credentials: "include"
+    });
+  });
+
+  it("surfaces backend detail when loading the admin prompt fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "prompt unavailable" }), {
+        status: 503,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      })
+    );
+
+    await expect(api.getAdminPrompt()).rejects.toThrow("prompt unavailable");
+  });
 });
 
 describe("streamChat", () => {

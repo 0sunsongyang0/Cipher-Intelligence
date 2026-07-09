@@ -56,13 +56,14 @@ export function App() {
         }
 
         applySession(session);
-      } catch {
+      } catch (nextError) {
         if (!active) {
           return;
         }
 
         setSessionAuthenticated(false);
         setViewer(null);
+        setError(getErrorMessage(nextError));
       } finally {
         if (active) {
           setSessionKnown(true);
