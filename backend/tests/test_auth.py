@@ -12,7 +12,7 @@ import app.database as database_module
 import app.config as config_module
 from app.auth import COOKIE_NAME, hash_token
 from app.database import SessionLocal
-from app.models import InviteCode, Session as SessionModel, now_utc
+from app.models import InviteCode, Session as SessionModel, User, now_utc
 
 
 def login(
@@ -127,6 +127,65 @@ def test_login_rejects_disabled_user(client, create_user) -> None:
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Invalid username or password"}
+
+
+def test_legacy_password_only_login_still_succeeds(client) -> None:
+    response = client.post(
+        "/api/auth/login",
+        json={"password": config_module.settings.app_access_password},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": True, "user": None}
+    assert "campus_session" in response.cookies
+
+
+def test_register_rolls_back_user_and_invite_if_session_creation_fails(
+    client, create_invite_code, monkeypatch
+) -> None:
+    create_invite_code(code="SMBU@2014520uu-", max_uses=3)
+
+    def fail_create_session(db, user=None, commit=True):
+        raise RuntimeError("session write failed")
+
+    monkeypatch.setattr("app.routes.auth.create_session", fail_create_session)
+
+    with pytest.raises(RuntimeError, match="session write failed"):
+        client.post(
+            "/api/auth/register",
+            json={
+                "username": "alice",
+                "password": "StrongPass123!",
+                "inviteCode": "SMBU@2014520uu-",
+            },
+        )
+
+    with SessionLocal() as db:
+        invite_code = db.execute(
+            select(InviteCode).where(InviteCode.code == "SMBU@2014520uu-")
+        ).scalar_one()
+        assert invite_code.used_count == 0
+        assert db.execute(select(User).where(User.username == "alice")).scalar_one_or_none() is None
+
+
+def test_register_translates_duplicate_username_integrity_error_to_clean_400(
+    client, create_user, create_invite_code, monkeypatch
+) -> None:
+    create_user(username="alice", password="StrongPass123!")
+    create_invite_code(code="SMBU@2014520uu-", max_uses=3)
+    monkeypatch.setattr("app.routes.auth.validate_registration_username", lambda db, username: None)
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": "alice",
+            "password": "StrongPass123!",
+            "inviteCode": "SMBU@2014520uu-",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Username is already taken"}
 
 
 def test_login_sets_campus_session_cookie(client, create_user) -> None:

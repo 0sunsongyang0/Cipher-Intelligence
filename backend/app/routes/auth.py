@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -13,8 +14,10 @@ from app.auth import (
     get_invite_code_record,
     get_session_record,
     get_session_user,
+    is_duplicate_username_error,
     validate_registration_password,
     validate_registration_username,
+    verify_shared_password,
     serialize_user,
 )
 from app.config import settings
@@ -63,9 +66,29 @@ def register(
             detail="Invite code is invalid",
         )
 
-    user = create_user_account(db, username=payload.username, password=payload.password)
-    consume_invite_code(db, invite_code)
-    token = create_session(db, user=user)
+    try:
+        user = create_user_account(
+            db,
+            username=payload.username,
+            password=payload.password,
+            commit=False,
+        )
+        consume_invite_code(db, invite_code, commit=False)
+        token = create_session(db, user=user, commit=False)
+        db.commit()
+        db.refresh(user)
+    except IntegrityError as error:
+        db.rollback()
+        if is_duplicate_username_error(error):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username is already taken",
+            ) from error
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
     set_session_cookie(response, token)
     return AuthSuccess(authenticated=True, user=serialize_user(user))
 
@@ -83,6 +106,19 @@ def login(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts",
         )
+
+    if payload.username is None:
+        if not verify_shared_password(payload.password):
+            record_failed_attempt(client_ip)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid password",
+            )
+
+        clear_failed_attempts(client_ip)
+        token = create_session(db)
+        set_session_cookie(response, token)
+        return AuthSuccess(authenticated=True, user=None)
 
     user = authenticate_user(db, username=payload.username, password=payload.password)
     if user is None:

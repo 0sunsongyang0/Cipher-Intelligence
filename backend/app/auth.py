@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -49,11 +50,15 @@ def verify_password(password: str, password_hash: str) -> bool:
     return secrets.compare_digest(actual_digest, expected_digest)
 
 
+def verify_shared_password(password: str) -> bool:
+    return secrets.compare_digest(password, settings.app_access_password)
+
+
 def get_client_ip(request: Request) -> str:
     return request.client.host if request.client is not None else ""
 
 
-def create_session(db: Session, user: User | None = None) -> str:
+def create_session(db: Session, user: User | None = None, *, commit: bool = True) -> str:
     token = secrets.token_urlsafe(32)
     session = SessionModel(
         user_id=user.id if user is not None else None,
@@ -61,8 +66,11 @@ def create_session(db: Session, user: User | None = None) -> str:
         expires_at=now_utc() + SESSION_TTL,
     )
     db.add(session)
-    db.commit()
-    db.refresh(session)
+    if commit:
+        db.commit()
+        db.refresh(session)
+    else:
+        db.flush()
     return token
 
 
@@ -110,11 +118,15 @@ def validate_registration_password(password: str) -> str | None:
     return None
 
 
-def create_user_account(db: Session, *, username: str, password: str) -> User:
+def create_user_account(
+    db: Session, *, username: str, password: str, commit: bool = True
+) -> User:
     user = User(username=username, password_hash=hash_password(password))
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    db.flush()
+    if commit:
+        db.commit()
+        db.refresh(user)
     return user
 
 
@@ -138,12 +150,17 @@ def get_invite_code_record(db: Session, code: str) -> InviteCode | None:
     return invite_code
 
 
-def consume_invite_code(db: Session, invite_code: InviteCode) -> InviteCode:
+def consume_invite_code(db: Session, invite_code: InviteCode, *, commit: bool = True) -> InviteCode:
     invite_code.used_count += 1
     db.add(invite_code)
-    db.commit()
-    db.refresh(invite_code)
+    if commit:
+        db.commit()
+        db.refresh(invite_code)
     return invite_code
+
+
+def is_duplicate_username_error(error: IntegrityError) -> bool:
+    return "users.username" in str(error.orig)
 
 
 def get_session_user(db: Session, session: SessionModel | None) -> User | None:
