@@ -31,7 +31,7 @@ def test_login_sets_campus_session_cookie(client) -> None:
     assert "campus_session" in response.cookies
 
 
-def test_init_db_migrates_legacy_account_schema(monkeypatch) -> None:
+def test_database_bootstrap_adds_user_and_invite_schema(monkeypatch) -> None:
     base_dir = Path("backend/.pytest-tmp")
     base_dir.mkdir(exist_ok=True)
     temp_dir = Path(mkdtemp(dir=base_dir))
