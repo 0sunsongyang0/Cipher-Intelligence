@@ -78,8 +78,12 @@ export async function checkSession(): Promise<SessionStatus> {
     throw toRequestError(error);
   }
 
-  if (!response.ok) {
+  if (response.status === 401) {
     return { authenticated: false, user: null };
+  }
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
   }
 
   return (await response.json()) as SessionStatus;

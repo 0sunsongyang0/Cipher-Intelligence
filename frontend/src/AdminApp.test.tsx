@@ -198,4 +198,61 @@ describe("AdminApp", () => {
     expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
     expect(screen.getByTestId("admin-location")).toHaveTextContent("/admin.html");
   });
+
+  it("preserves the requested admin subsection after a successful login", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.checkSession).mockResolvedValueOnce({
+      authenticated: false,
+      user: null,
+    });
+    vi.mocked(api.login).mockResolvedValue({
+      authenticated: true,
+      user: { id: 6, username: "admin", isAdmin: true },
+    });
+    vi.mocked(api.getAdminOverview).mockResolvedValue({
+      services: {
+        backend: { running: true, label: "running", detail: "Backend service is running." },
+        tunnel: { running: true, label: "running", detail: "Cloudflare tunnel is running." },
+        autostartEnabled: true,
+      },
+      access: {
+        localUrl: "http://127.0.0.1:8000/chat",
+        publicUrl: "https://[private-host]/chat",
+      },
+      models: {
+        providers: [{ provider: "DeepSeek", healthy: 2, total: 2 }],
+      },
+      files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 3 },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/admin.html/models"]}>
+        <AdminApp />
+        <LocationProbe />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
+    await user.type(document.getElementById("admin-username") as HTMLElement, "admin");
+    await user.type(document.getElementById("admin-password") as HTMLElement, "StrongPass123!");
+    await user.click(document.querySelector('button[type="submit"]') as HTMLElement);
+
+    expect(await screen.findByText("DeepSeek")).toBeInTheDocument();
+    expect(screen.queryByText("http://127.0.0.1:8000/chat")).not.toBeInTheDocument();
+    expect(screen.getByTestId("admin-location")).toHaveTextContent("/admin.html/models");
+  });
+
+  it("shows a session restore error instead of silently treating admin backend failures as logged out", async () => {
+    vi.mocked(api.checkSession).mockRejectedValue(new Error("session backend unavailable"));
+
+    render(
+      <MemoryRouter initialEntries={["/admin.html/models"]}>
+        <AdminApp />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("session backend unavailable");
+    expect(screen.queryByRole("heading", { name: "后端管理" })).not.toBeInTheDocument();
+  });
 });

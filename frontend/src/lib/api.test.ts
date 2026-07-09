@@ -3,7 +3,7 @@ import * as api from "./api";
 import type { OutboundChatMessage } from "../types";
 
 describe("api auth helpers", () => {
-  it("returns an anonymous session payload when the session endpoint is not ok", async () => {
+  it("returns an anonymous session payload when the session endpoint returns 401", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 401 })
     );
@@ -12,6 +12,19 @@ describe("api auth helpers", () => {
     expect(fetchSpy).toHaveBeenCalledWith("/api/auth/session", {
       credentials: "include"
     });
+  });
+
+  it("throws backend detail when the session endpoint returns a server error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "session backend unavailable" }), {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      })
+    );
+
+    await expect(api.checkSession()).rejects.toThrow("session backend unavailable");
   });
 
   it("posts username and password for login", async () => {
