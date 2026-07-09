@@ -11,6 +11,29 @@ export type SessionStatus = {
   user: AuthUser | null;
 };
 
+export type AdminInviteItem = {
+  id: number;
+  code: string;
+  label: string;
+  isActive: boolean;
+  maxUses: number | null;
+  usedCount: number;
+  expiresAt: string | null;
+  createdAt: string;
+};
+
+export type AdminInviteListResponse = {
+  items: AdminInviteItem[];
+};
+
+export type AdminInviteCreateRequest = {
+  code: string;
+  label: string;
+  maxUses: number | null;
+  expiresAt: string | null;
+  isActive: boolean;
+};
+
 export type LocalChatMessage = {
   id: string;
   role: ChatRole;

@@ -1,8 +1,10 @@
 import { IconArrowLeft, IconRefresh } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+
 import { AuroraBackground } from "../components/AuroraBackground";
 import { AdminFilesPanel } from "../components/admin/AdminFilesPanel";
+import { InviteCodesPanel } from "../components/admin/InviteCodesPanel";
 import { AdminModelsPanel } from "../components/admin/AdminModelsPanel";
 import { AdminOverview } from "../components/admin/AdminOverview";
 import { AdminPromptPanel } from "../components/admin/AdminPromptPanel";
@@ -12,11 +14,11 @@ import {
   getAdminOverview,
   getAdminPrompt,
   resetAdminPrompt,
-  saveAdminPrompt,
+  saveAdminPrompt
 } from "../lib/api";
 import type { AdminOverview as AdminOverviewData, AdminPrompt } from "../types";
 
-const ADMIN_SECTIONS = ["services", "models", "files", "prompt"] as const;
+const ADMIN_SECTIONS = ["services", "models", "files", "prompt", "invites"] as const;
 type AdminSection = "overview" | (typeof ADMIN_SECTIONS)[number];
 
 function getActiveSection(pathname: string): AdminSection {
@@ -33,6 +35,9 @@ function getActiveSection(pathname: string): AdminSection {
   }
   if (lastSegment === "prompt") {
     return "prompt";
+  }
+  if (lastSegment === "invites") {
+    return "invites";
   }
   return "overview";
 }
@@ -58,7 +63,7 @@ function getAdminRootPath(pathname: string): string {
 
 export function AdminPage({
   onLogout,
-  sessionError,
+  sessionError
 }: {
   onLogout: () => Promise<void> | void;
   sessionError?: string | null;
@@ -82,7 +87,7 @@ export function AdminPage({
   const activeError = sessionError ?? error;
   const serviceLabels = {
     backend: "聊天服务",
-    tunnel: "Cloudflare 隧道",
+    tunnel: "Cloudflare 隧道"
   } as const;
 
   const navItems = useMemo<Array<{ to: string; label: string; key: AdminSection }>>(
@@ -92,6 +97,7 @@ export function AdminPage({
       { to: "/models", label: "模型", key: "models" },
       { to: "/files", label: "文件", key: "files" },
       { to: "/prompt", label: "系统提示词", key: "prompt" },
+      { to: "/invites", label: "邀请码", key: "invites" }
     ],
     []
   );
@@ -225,10 +231,7 @@ export function AdminPage({
 
   function renderSection() {
     if (loading) {
-      return renderLoadingCard(
-        "正在读取管理状态",
-        "稍等一下，后台服务、隧道、模型和 ZIP 状态正在汇总。"
-      );
+      return renderLoadingCard("正在读取管理状态", "稍等一下，后台服务、隧道、模型和 ZIP 状态正在汇总。");
     }
 
     if (!overview) {
@@ -236,9 +239,7 @@ export function AdminPage({
         <section className="admin-card admin-card--wide">
           <p className="eyebrow">状态异常</p>
           <h2>当前没有可显示的数据</h2>
-          <p className="admin-card__copy">
-            请刷新页面后重试，如果问题持续存在，再检查后台服务是否正常启动。
-          </p>
+          <p className="admin-card__copy">请刷新页面后重试，如果问题持续存在，再检查后台服务是否正常启动。</p>
         </section>
       );
     }
@@ -286,6 +287,10 @@ export function AdminPage({
       );
     }
 
+    if (section === "invites") {
+      return <InviteCodesPanel />;
+    }
+
     return (
       <div className="admin-panel-stack">
         <AdminOverview overview={overview} busyTarget={busyTarget} onToggle={handleToggle} />
@@ -304,9 +309,7 @@ export function AdminPage({
             <span className="brand-mark">Cipher Admin</span>
             <p className="eyebrow">独立管理入口</p>
             <h1>后端管理</h1>
-            <p className="lead">
-              这个入口和聊天前台分离，后续可以独立挂到 `admin` 二级域名。
-            </p>
+            <p className="lead">这个入口和聊天前台分离，后续可以独立挂到 `admin` 二级域名。</p>
           </div>
 
           <nav className="admin-console__nav" aria-label="后台导航">

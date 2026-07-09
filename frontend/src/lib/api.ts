@@ -1,5 +1,8 @@
 import {
   DEFAULT_DEEPSEEK_MODEL_ID,
+  type AdminInviteCreateRequest,
+  type AdminInviteItem,
+  type AdminInviteListResponse,
   type AdminFileCacheClearResult,
   type AdminOverview,
   type AdminPrompt,
@@ -274,6 +277,83 @@ export async function resetAdminPrompt(): Promise<AdminPromptMutationResult> {
   }
 
   return (await response.json()) as AdminPromptMutationResult;
+}
+
+export async function getAdminInvites(): Promise<AdminInviteListResponse> {
+  let response: Response;
+
+  try {
+    response = await fetch("/api/admin/invites", {
+      credentials: "include"
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return (await response.json()) as AdminInviteListResponse;
+}
+
+export async function createAdminInvite(payload: AdminInviteCreateRequest): Promise<AdminInviteItem> {
+  let response: Response;
+
+  try {
+    response = await fetch("/api/admin/invites", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return (await response.json()) as AdminInviteItem;
+}
+
+export async function toggleAdminInvite(inviteId: number): Promise<AdminInviteItem> {
+  let response: Response;
+
+  try {
+    response = await fetch(`/api/admin/invites/${inviteId}/toggle`, {
+      method: "POST",
+      credentials: "include"
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return (await response.json()) as AdminInviteItem;
+}
+
+export async function deleteAdminInvite(inviteId: number): Promise<void> {
+  let response: Response;
+
+  try {
+    response = await fetch(`/api/admin/invites/${inviteId}`, {
+      method: "DELETE",
+      credentials: "include"
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
 }
 
 export async function streamChat(

@@ -365,6 +365,139 @@ describe("api auth helpers", () => {
 
     await expect(api.getAdminPrompt()).rejects.toThrow("prompt unavailable");
   });
+
+  it("loads admin invites with credentials", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: 1,
+              code: "SMBU@2014520uu-",
+              label: "July batch",
+              isActive: true,
+              maxUses: 5,
+              usedCount: 0,
+              expiresAt: null,
+              createdAt: "2026-07-09T10:00:00Z"
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(api.getAdminInvites()).resolves.toEqual({
+      items: [
+        {
+          id: 1,
+          code: "SMBU@2014520uu-",
+          label: "July batch",
+          isActive: true,
+          maxUses: 5,
+          usedCount: 0,
+          expiresAt: null,
+          createdAt: "2026-07-09T10:00:00Z"
+        }
+      ]
+    });
+    expect(fetchSpy).toHaveBeenCalledWith("/api/admin/invites", {
+      credentials: "include"
+    });
+  });
+
+  it("creates an admin invite with a json body", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 1,
+          code: "SMBU@2014520uu-",
+          label: "July batch",
+          isActive: true,
+          maxUses: 5,
+          usedCount: 0,
+          expiresAt: null,
+          createdAt: "2026-07-09T10:00:00Z"
+        }),
+        {
+          status: 201,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(
+      api.createAdminInvite({
+        code: "SMBU@2014520uu-",
+        label: "July batch",
+        maxUses: 5,
+        expiresAt: null,
+        isActive: true
+      })
+    ).resolves.toMatchObject({
+      id: 1,
+      code: "SMBU@2014520uu-"
+    });
+    expect(fetchSpy).toHaveBeenCalledWith("/api/admin/invites", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        code: "SMBU@2014520uu-",
+        label: "July batch",
+        maxUses: 5,
+        expiresAt: null,
+        isActive: true
+      })
+    });
+  });
+
+  it("toggles and deletes admin invites with credentials", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: 1,
+            code: "SMBU@2014520uu-",
+            label: "July batch",
+            isActive: false,
+            maxUses: 5,
+            usedCount: 0,
+            expiresAt: null,
+            createdAt: "2026-07-09T10:00:00Z"
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        )
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(api.toggleAdminInvite(1)).resolves.toMatchObject({ id: 1, isActive: false });
+    await expect(api.deleteAdminInvite(1)).resolves.toBeUndefined();
+
+    expect(fetchSpy).toHaveBeenNthCalledWith(1, "/api/admin/invites/1/toggle", {
+      method: "POST",
+      credentials: "include"
+    });
+    expect(fetchSpy).toHaveBeenNthCalledWith(2, "/api/admin/invites/1", {
+      method: "DELETE",
+      credentials: "include"
+    });
+  });
 });
 
 describe("streamChat", () => {
