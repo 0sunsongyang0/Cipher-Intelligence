@@ -81,7 +81,7 @@ class InviteCode(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     code: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
-    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    label: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     max_uses: Mapped[int | None] = mapped_column(Integer, nullable=True)
     used_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
