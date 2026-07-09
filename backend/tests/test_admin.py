@@ -342,14 +342,14 @@ def test_admin_invites_flow_lists_creates_toggles_and_deletes_invites(
 
     create_response = admin_client.post(
         "/api/admin/invites",
-        json={"code": "new-invite", "label": "Fresh", "maxUses": 5},
+        json={"code": "new-invite", "label": "Fresh", "maxUses": 5, "isActive": False},
     )
 
     assert create_response.status_code == 201
     created_invite = create_response.json()
     assert created_invite["code"] == "new-invite"
     assert created_invite["label"] == "Fresh"
-    assert created_invite["isActive"] is True
+    assert created_invite["isActive"] is False
     assert created_invite["maxUses"] == 5
     assert created_invite["usedCount"] == 0
 
@@ -357,7 +357,7 @@ def test_admin_invites_flow_lists_creates_toggles_and_deletes_invites(
 
     assert toggle_response.status_code == 200
     assert toggle_response.json()["id"] == created_invite["id"]
-    assert toggle_response.json()["isActive"] is False
+    assert toggle_response.json()["isActive"] is True
 
     delete_response = admin_client.delete(f"/api/admin/invites/{created_invite['id']}")
 
@@ -368,8 +368,12 @@ def test_admin_invites_flow_lists_creates_toggles_and_deletes_invites(
         deleted_invite = db.execute(
             select(InviteCode).where(InviteCode.id == created_invite["id"])
         ).scalar_one_or_none()
+        existing_invite_after_create = db.execute(
+            select(InviteCode).where(InviteCode.id == existing_invite.id)
+        ).scalar_one()
 
     assert deleted_invite is None
+    assert existing_invite_after_create.is_active is True
 
 
 def test_admin_invites_reject_legacy_anonymous_session(admin_client: TestClient) -> None:

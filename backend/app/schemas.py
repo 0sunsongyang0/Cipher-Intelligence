@@ -67,6 +67,7 @@ class AdminInviteCreateRequest(BaseModel):
     label: str = ""
     maxUses: int | None = None
     expiresAt: datetime | None = None
+    isActive: bool = True
 
 
 class ConversationCreate(BaseModel):

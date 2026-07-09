@@ -282,6 +282,7 @@ def create_admin_invite(
     invite_code = InviteCode(
         code=payload.code,
         label=payload.label,
+        is_active=payload.isActive,
         max_uses=payload.maxUses,
         expires_at=payload.expiresAt,
     )
