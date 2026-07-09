@@ -85,7 +85,7 @@ export function AdminPage({
     tunnel: "Cloudflare 隧道",
   } as const;
 
-  const navItems = useMemo(
+  const navItems = useMemo<Array<{ to: string; label: string; key: AdminSection }>>(
     () => [
       { to: "/", label: "总览", key: "overview" },
       { to: "/services", label: "服务", key: "services" },
