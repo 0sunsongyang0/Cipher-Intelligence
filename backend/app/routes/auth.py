@@ -26,6 +26,7 @@ from app.rate_limit import clear_failed_attempts, is_rate_limited, record_failed
 from app.schemas import AuthSuccess, LoginRequest, RegisterRequest, SessionStatus
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+admin_router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 def set_session_cookie(response: Response, token: str) -> None:
@@ -93,12 +94,13 @@ def register(
     return AuthSuccess(authenticated=True, user=serialize_user(user))
 
 
-@router.post("/login", response_model=AuthSuccess)
-def login(
+def login_impl(
     payload: LoginRequest,
     request: Request,
     response: Response,
-    db: Session = Depends(get_db),
+    db: Session,
+    *,
+    allow_shared_password: bool,
 ) -> AuthSuccess:
     client_ip = get_client_ip(request)
     if is_rate_limited(client_ip):
@@ -108,6 +110,13 @@ def login(
         )
 
     if payload.username is None:
+        if not allow_shared_password:
+            record_failed_attempt(client_ip)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid username or password",
+            )
+
         if not verify_shared_password(payload.password):
             record_failed_attempt(client_ip)
             raise HTTPException(
@@ -134,8 +143,27 @@ def login(
     return AuthSuccess(authenticated=True, user=serialize_user(user))
 
 
-@router.post("/logout", response_model=SessionStatus)
-def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> SessionStatus:
+@router.post("/login", response_model=AuthSuccess)
+def login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> AuthSuccess:
+    return login_impl(payload, request, response, db, allow_shared_password=True)
+
+
+@admin_router.post("/login", response_model=AuthSuccess)
+def admin_login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> AuthSuccess:
+    return login_impl(payload, request, response, db, allow_shared_password=False)
+
+
+def logout_impl(request: Request, response: Response, db: Session) -> SessionStatus:
     delete_session(db, request.cookies.get(COOKIE_NAME))
     response.delete_cookie(
         key=COOKIE_NAME,
@@ -146,11 +174,30 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)) 
     return SessionStatus(authenticated=False, user=None)
 
 
-@router.get("/session", response_model=SessionStatus)
-def session_status(request: Request, db: Session = Depends(get_db)) -> SessionStatus:
+@router.post("/logout", response_model=SessionStatus)
+def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> SessionStatus:
+    return logout_impl(request, response, db)
+
+
+@admin_router.post("/logout", response_model=SessionStatus)
+def admin_logout(request: Request, response: Response, db: Session = Depends(get_db)) -> SessionStatus:
+    return logout_impl(request, response, db)
+
+
+def session_status_impl(request: Request, db: Session) -> SessionStatus:
     session = get_session_record(db, request.cookies.get(COOKIE_NAME))
     user = get_session_user(db, session)
     return SessionStatus(
         authenticated=session is not None,
         user=serialize_user(user) if user is not None else None,
     )
+
+
+@router.get("/session", response_model=SessionStatus)
+def session_status(request: Request, db: Session = Depends(get_db)) -> SessionStatus:
+    return session_status_impl(request, db)
+
+
+@admin_router.get("/session", response_model=SessionStatus)
+def admin_session_status(request: Request, db: Session = Depends(get_db)) -> SessionStatus:
+    return session_status_impl(request, db)

@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.auth import COOKIE_NAME, create_session
 from app.config import DEFAULT_CHAT_SYSTEM_PROMPT, settings
 from app.database import engine
 from app.database import SessionLocal
@@ -60,9 +61,26 @@ def login_as_user(client: TestClient, *, username: str, password: str) -> None:
     assert response.status_code == 200
 
 
-def login_as_legacy_session(client: TestClient) -> None:
-    response = client.post("/api/auth/login", json={"password": settings.app_access_password})
-    assert response.status_code == 200
+def create_legacy_anonymous_session(client: TestClient) -> None:
+    with SessionLocal() as db:
+        token = create_session(db)
+    client.cookies.set(COOKIE_NAME, token)
+
+
+def test_admin_auth_rejects_legacy_password_only_login(admin_client: TestClient) -> None:
+    response = admin_client.post("/api/auth/login", json={"password": settings.app_access_password})
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid username or password"}
+
+
+def test_admin_auth_does_not_expose_registration(admin_client: TestClient) -> None:
+    response = admin_client.post(
+        "/api/auth/register",
+        json={"username": "new-user", "password": "StrongPass123", "inviteCode": "ignored"},
+    )
+
+    assert response.status_code == 404
 
 
 def test_admin_shell_requires_authentication(admin_client: TestClient) -> None:
@@ -73,7 +91,7 @@ def test_admin_shell_requires_authentication(admin_client: TestClient) -> None:
 
 
 def test_admin_shell_rejects_legacy_anonymous_session(admin_client: TestClient) -> None:
-    login_as_legacy_session(admin_client)
+    create_legacy_anonymous_session(admin_client)
 
     response = admin_client.get("/")
 
@@ -111,7 +129,7 @@ def test_admin_overview_requires_authentication(admin_client: TestClient) -> Non
 
 
 def test_admin_overview_rejects_legacy_anonymous_session(admin_client: TestClient) -> None:
-    login_as_legacy_session(admin_client)
+    create_legacy_anonymous_session(admin_client)
 
     response = admin_client.get("/api/admin/overview")
 
@@ -376,8 +394,26 @@ def test_admin_invites_flow_lists_creates_toggles_and_deletes_invites(
     assert existing_invite_after_create.is_active is True
 
 
+@pytest.mark.parametrize("max_uses", [0, -1])
+def test_admin_invites_reject_invalid_max_uses(
+    admin_client: TestClient,
+    create_user,
+    max_uses: int,
+) -> None:
+    create_user(username="admin", password="admin-pass-1", is_admin=True)
+    login_as_user(admin_client, username="admin", password="admin-pass-1")
+
+    response = admin_client.post(
+        "/api/admin/invites",
+        json={"code": f"bad-{max_uses}", "label": "Bad", "maxUses": max_uses},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["msg"] == "Value error, maxUses must be greater than 0"
+
+
 def test_admin_invites_reject_legacy_anonymous_session(admin_client: TestClient) -> None:
-    login_as_legacy_session(admin_client)
+    create_legacy_anonymous_session(admin_client)
 
     list_response = admin_client.get("/api/admin/invites")
     create_response = admin_client.post("/api/admin/invites", json={"code": "new-invite"})

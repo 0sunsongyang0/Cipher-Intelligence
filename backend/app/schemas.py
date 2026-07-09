@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator
 
 
 ChatModelId = Literal[
@@ -68,6 +68,13 @@ class AdminInviteCreateRequest(BaseModel):
     maxUses: int | None = None
     expiresAt: datetime | None = None
     isActive: bool = True
+
+    @field_validator("maxUses")
+    @classmethod
+    def validate_max_uses(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("maxUses must be greater than 0")
+        return value
 
 
 class ConversationCreate(BaseModel):
