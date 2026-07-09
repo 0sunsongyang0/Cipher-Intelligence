@@ -83,6 +83,49 @@ def test_admin_auth_does_not_expose_registration(admin_client: TestClient) -> No
     assert response.status_code == 404
 
 
+def test_admin_auth_session_reports_legacy_anonymous_session_as_unauthenticated(
+    admin_client: TestClient,
+) -> None:
+    create_legacy_anonymous_session(admin_client)
+
+    response = admin_client.get("/api/auth/session")
+
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": False, "user": None}
+
+
+def test_admin_auth_session_reports_non_admin_user_session(
+    admin_client: TestClient,
+    create_user,
+) -> None:
+    user = create_user(username="member", password="member-pass-1")
+    login_as_user(admin_client, username="member", password="member-pass-1")
+
+    response = admin_client.get("/api/auth/session")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "authenticated": True,
+        "user": {"id": user.id, "username": "member", "isAdmin": False},
+    }
+
+
+def test_admin_auth_session_reports_admin_user_session(
+    admin_client: TestClient,
+    create_user,
+) -> None:
+    user = create_user(username="admin", password="admin-pass-1", is_admin=True)
+    login_as_user(admin_client, username="admin", password="admin-pass-1")
+
+    response = admin_client.get("/api/auth/session")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "authenticated": True,
+        "user": {"id": user.id, "username": "admin", "isAdmin": True},
+    }
+
+
 def test_admin_shell_requires_authentication(admin_client: TestClient) -> None:
     response = admin_client.get("/")
 

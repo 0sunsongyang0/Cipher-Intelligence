@@ -193,6 +193,15 @@ def session_status_impl(request: Request, db: Session) -> SessionStatus:
     )
 
 
+def admin_session_status_impl(request: Request, db: Session) -> SessionStatus:
+    session = get_session_record(db, request.cookies.get(COOKIE_NAME))
+    user = get_session_user(db, session)
+    return SessionStatus(
+        authenticated=user is not None,
+        user=serialize_user(user) if user is not None else None,
+    )
+
+
 @router.get("/session", response_model=SessionStatus)
 def session_status(request: Request, db: Session = Depends(get_db)) -> SessionStatus:
     return session_status_impl(request, db)
@@ -200,4 +209,4 @@ def session_status(request: Request, db: Session = Depends(get_db)) -> SessionSt
 
 @admin_router.get("/session", response_model=SessionStatus)
 def admin_session_status(request: Request, db: Session = Depends(get_db)) -> SessionStatus:
-    return session_status_impl(request, db)
+    return admin_session_status_impl(request, db)
