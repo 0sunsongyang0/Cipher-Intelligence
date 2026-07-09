@@ -8,7 +8,13 @@ from app.config import settings
 from app.database import init_db
 from app.routes.auth import router as auth_router
 from app.routes.chat import router as chat_router
-from app.routes.frontend import FRONTEND_ASSETS_DIR, router as frontend_router
+from app.routes.conversations import router as conversations_router
+from app.routes.frontend import (
+    FRONTEND_ASSETS_DIR,
+    FRONTEND_FILE_ICONS_DIR,
+    router as frontend_router,
+)
+from app.routes.upload_zip import router as upload_zip_router
 
 
 @asynccontextmanager
@@ -27,8 +33,16 @@ def create_app() -> FastAPI:
     )
     app.include_router(auth_router)
     app.include_router(chat_router)
+    app.include_router(conversations_router)
+    app.include_router(upload_zip_router)
     if FRONTEND_ASSETS_DIR.is_dir():
         app.mount("/assets", StaticFiles(directory=FRONTEND_ASSETS_DIR), name="frontend-assets")
+    if FRONTEND_FILE_ICONS_DIR.is_dir():
+        app.mount(
+            "/file-icons",
+            StaticFiles(directory=FRONTEND_FILE_ICONS_DIR),
+            name="frontend-file-icons",
+        )
 
     @app.get("/api/health")
     def health_check() -> dict[str, str]:

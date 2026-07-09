@@ -191,3 +191,16 @@ def require_session(
             detail="Authentication required",
         )
     return session
+
+
+def require_user_session(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> SessionModel:
+    session = require_session(request, db)
+    if session.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User authentication required",
+        )
+    return session

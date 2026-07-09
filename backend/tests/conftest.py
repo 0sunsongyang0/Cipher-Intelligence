@@ -17,7 +17,7 @@ from app.auth import hash_password
 from app.database import engine
 from app.database import SessionLocal
 from app.main import app
-from app.models import InviteCode, User
+from app.models import Conversation, InviteCode, Message, User
 from app.rate_limit import reset_failed_attempts
 
 
@@ -78,6 +78,40 @@ def create_user():
             return user
 
     return _create_user
+
+
+@pytest.fixture()
+def create_conversation_for_user():
+    def _create_conversation_for_user(
+        *,
+        user: User,
+        title: str,
+        messages: list[tuple[str, str]] | None = None,
+    ) -> Conversation:
+        with SessionLocal() as db:
+            conversation = Conversation(
+                title=title,
+                owner_session_id=0,
+                owner_user_id=user.id,
+            )
+            db.add(conversation)
+            db.flush()
+
+            for role, content in messages or []:
+                db.add(
+                    Message(
+                        conversation_id=conversation.id,
+                        role=role,
+                        content=content,
+                    )
+                )
+
+            db.commit()
+            db.refresh(conversation)
+            db.expunge(conversation)
+            return conversation
+
+    return _create_conversation_for_user
 
 
 @pytest.fixture()

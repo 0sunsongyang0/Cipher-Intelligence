@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.attachments import AttachmentError
-from app.auth import COOKIE_NAME, get_session_record
-from app.database import get_db
+from app.auth import require_user_session
 from app.models import Session as SessionModel
 from app.schemas import ChatModelId, UploadZipResponse
 from app.zip_context_store import get_zip_model_support, zip_context_store
@@ -17,26 +15,12 @@ router = APIRouter(prefix="/api/upload_zip", tags=["upload-zip"])
 
 NON_ZIP_UPLOAD_ERROR = "上传的文件必须是 ZIP 压缩包。"
 
-
-def require_upload_zip_session(
-    request: Request,
-    db: Session = Depends(get_db),
-) -> SessionModel:
-    session = get_session_record(db, request.cookies.get(COOKIE_NAME))
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
-    return session
-
-
 @router.post("", response_model=UploadZipResponse)
 async def upload_zip(
     conversationId: str = Form(...),
     model: ChatModelId = Form(...),
     file: UploadFile = File(...),
-    current_session: SessionModel = Depends(require_upload_zip_session),
+    current_session: SessionModel = Depends(require_user_session),
 ) -> UploadZipResponse:
     filename = file.filename or "upload.zip"
     if not filename.lower().endswith(".zip"):
@@ -56,7 +40,7 @@ async def upload_zip(
         ) from exc
 
     stored = zip_context_store.save(
-        owner_session_id=current_session.id,
+        owner_user_id=current_session.user_id,
         conversation_id=conversationId,
         parsed=parsed,
     )

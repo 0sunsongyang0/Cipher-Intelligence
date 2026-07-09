@@ -16,34 +16,20 @@ from app.attachments import (
     extract_attachments,
     prepare_attachments,
 )
-from app.auth import COOKIE_NAME, get_session_record
+from app.auth import require_user_session
 from app.database import get_db
 from app.deepseek import DeepSeekConfigurationError, stream_chat_completion
 from app.models import Session as SessionModel
+from app.search_chat import stream_search_chat
 from app.schemas import ChatRequest, parse_chat_request_json
+from app.web_search import WebSearchConfigurationError, WebSearchUpstreamError
 from app.zip_context_store import get_zip_model_support, zip_context_store
 
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
-MISSING_ZIP_CONTEXT_ERROR = "ZIP 上下文不存在或已过期，请重新上传压缩包。"
-
-
-def build_chat_stream(
-    messages: list[dict[str, Any]],
-    model: str,
-):
-    stream_signature = inspect.signature(stream_chat_completion)
-    accepts_model = len(stream_signature.parameters) > 1 or any(
-        parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-        for parameter in stream_signature.parameters.values()
-    )
-
-    if accepts_model:
-        return stream_chat_completion(messages, model)
-
-    return stream_chat_completion(messages)
+MISSING_ZIP_CONTEXT_ERROR = "ZIP \u4e0a\u4e0b\u6587\u4e0d\u5b58\u5728\u6216\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u4e0a\u4f20\u538b\u7f29\u5305\u3002"
 
 
 def prefix_validation_error_locations(errors: list[dict]) -> list[dict]:
@@ -101,7 +87,7 @@ def build_zip_context_block(
 
 
 def model_supports_native_vision(model: str) -> bool:
-    return model.startswith("chatgpt-") or model.startswith("claude-")
+    return model.startswith(("chatgpt-", "claude-"))
 
 
 def as_multimodal_text_blocks(content: Any) -> list[dict[str, Any]]:
@@ -156,23 +142,10 @@ def attach_vision_content_to_messages(
     return next_messages
 
 
-def require_chat_session(
-    request: Request,
-    db: Session = Depends(get_db),
-) -> SessionModel:
-    session = get_session_record(db, request.cookies.get(COOKIE_NAME))
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
-    return session
-
-
 @router.post("")
 async def chat(
     request: Request,
-    current_session: SessionModel = Depends(require_chat_session),
+    current_session: SessionModel = Depends(require_user_session),
 ) -> StreamingResponse:
     files = []
     content_type = request.headers.get("content-type", "")
@@ -224,7 +197,7 @@ async def chat(
 
         stored_zip_context = zip_context_store.get_for_scope(
             payload.zipContextId,
-            owner_session_id=current_session.id,
+            owner_user_id=current_session.user_id,
             conversation_id=payload.conversationId or "",
         )
         if stored_zip_context is None:
@@ -234,7 +207,10 @@ async def chat(
             )
         zip_context_block = build_zip_context_block(
             stored_zip_context.archive_name,
-            stored_zip_context.attachment_block,
+            zip_context_store.build_attachment_block_for_model(
+                stored_zip_context,
+                model=payload.model,
+            ),
             stored_zip_context.inventory_block,
         )
         zip_context_vision_images = [*stored_zip_context.vision_images]
@@ -264,9 +240,10 @@ async def chat(
             attachment_block = build_attachment_block(extracted_attachments)
             message_history = attach_block_to_messages(message_history, attachment_block)
             message_history = attach_block_to_messages(message_history, zip_context_block)
-        stream = build_chat_stream(
-            message_history,
-            payload.model,
+        stream = stream_search_chat(
+            messages=message_history,
+            model=payload.model,
+            web_search=payload.webSearch,
         )
         first_chunk = await anext(stream)
     except StopAsyncIteration:
@@ -279,6 +256,16 @@ async def chat(
     except DeepSeekConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except WebSearchConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except WebSearchUpstreamError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
     except Exception as exc:

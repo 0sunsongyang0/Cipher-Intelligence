@@ -6,9 +6,11 @@ from threading import Lock
 from time import time
 
 from app.attachments import (
+    AttachmentError,
     ExtractedAttachment,
     VisionImageAttachment,
     build_attachment_block,
+    extract_zip_vision_ocr_items,
 )
 from app.zip_parser import ParsedZipUpload, ZipInventoryEntry
 
@@ -18,16 +20,21 @@ ZIP_SUPPORTED_MODELS = {
     "deepseek-v4-pro",
     "chatgpt-5.5-official",
     "chatgpt-5.4-az",
+    "chatgpt-5.5-backup",
+    "chatgpt-5.4-backup",
     "claude-opus-4-7-official",
     "claude-opus-4-6-aws",
     "claude-sonnet-4-6-az",
+    "claude-opus-4-7-backup",
+    "claude-opus-4-6-backup",
+    "claude-sonnet-4-6-backup",
 }
 
 
 @dataclass
 class StoredZipContext:
     zip_context_id: str
-    owner_session_id: int
+    owner_user_id: int
     conversation_id: str
     uploaded_at: float
     archive_name: str
@@ -41,6 +48,7 @@ class StoredZipContext:
     vision_images: list[VisionImageAttachment]
     attachment_block: str
     inventory_block: str
+    cached_image_ocr_items: list[ExtractedAttachment] | None = None
 
 
 def build_zip_inventory_block(entries: list[ZipInventoryEntry]) -> str:
@@ -73,14 +81,14 @@ class ZipContextStore:
     def save(
         self,
         *,
-        owner_session_id: int,
+        owner_user_id: int,
         conversation_id: str,
         parsed: ParsedZipUpload,
     ) -> StoredZipContext:
         zip_context_id = secrets.token_urlsafe(16)
         stored = StoredZipContext(
             zip_context_id=zip_context_id,
-            owner_session_id=owner_session_id,
+            owner_user_id=owner_user_id,
             conversation_id=conversation_id,
             uploaded_at=time(),
             archive_name=parsed.archive_name,
@@ -97,7 +105,7 @@ class ZipContextStore:
         )
 
         with self._lock:
-            scope = (owner_session_id, conversation_id)
+            scope = (owner_user_id, conversation_id)
             previous = self._items_by_scope.get(scope)
             if previous is not None:
                 self._items_by_id.pop(previous.zip_context_id, None)
@@ -110,24 +118,62 @@ class ZipContextStore:
         self,
         zip_context_id: str,
         *,
-        owner_session_id: int,
+        owner_user_id: int,
         conversation_id: str,
     ) -> StoredZipContext | None:
         with self._lock:
             stored = self._items_by_id.get(zip_context_id)
             if (
                 stored is None
-                or stored.owner_session_id != owner_session_id
+                or stored.owner_user_id != owner_user_id
                 or stored.conversation_id != conversation_id
             ):
                 return None
             return stored
 
-    def clear_conversation(self, owner_session_id: int, conversation_id: str) -> None:
+    def clear_conversation(self, owner_user_id: int, conversation_id: str) -> None:
         with self._lock:
-            stored = self._items_by_scope.pop((owner_session_id, conversation_id), None)
+            stored = self._items_by_scope.pop((owner_user_id, conversation_id), None)
             if stored is not None:
                 self._items_by_id.pop(stored.zip_context_id, None)
+
+    def build_attachment_block_for_model(
+        self,
+        stored: StoredZipContext,
+        *,
+        model: str,
+    ) -> str:
+        if model.startswith(("chatgpt-", "claude-")):
+            return stored.attachment_block
+
+        if not stored.vision_images:
+            return stored.attachment_block
+
+        extracted_image_filenames = {
+            item.filename
+            for item in stored.extracted_items
+            if item.category == "image-ocr"
+        }
+        pending_vision_images = [
+            image for image in stored.vision_images if image.filename not in extracted_image_filenames
+        ]
+        if not pending_vision_images:
+            return stored.attachment_block
+
+        with self._lock:
+            cached_image_ocr_items = stored.cached_image_ocr_items
+
+        if cached_image_ocr_items is None:
+            try:
+                computed_items = extract_zip_vision_ocr_items(pending_vision_images)
+            except AttachmentError:
+                return stored.attachment_block
+            with self._lock:
+                if stored.cached_image_ocr_items is None:
+                    stored.cached_image_ocr_items = computed_items
+                cached_image_ocr_items = stored.cached_image_ocr_items
+
+        return build_attachment_block([*stored.extracted_items, *cached_image_ocr_items])
 
 
 zip_context_store = ZipContextStore()
