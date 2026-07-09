@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthGuard } from "./components/AuthGuard";
 import { AppShell } from "./components/webllm/AppShell";
-import { checkSession, login, logout } from "./lib/api";
-import { LoginPage } from "./pages/LoginPage";
+import { checkSession, login, logout, register } from "./lib/api";
+import { LoginPage, type AuthMode } from "./pages/LoginPage";
+import type { AuthUser } from "./types";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) {
@@ -16,27 +17,29 @@ function getErrorMessage(error: unknown): string {
 export function App() {
   const navigate = useNavigate();
   const [sessionKnown, setSessionKnown] = useState(false);
-  const [authenticated, setAuthenticated] = useState(false);
+  const [viewer, setViewer] = useState<AuthUser | null>(null);
+  const [mode, setMode] = useState<AuthMode>("login");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const authenticated = viewer !== null;
 
   useEffect(() => {
     let active = true;
 
     async function restoreSession() {
       try {
-        const hasSession = await checkSession();
+        const session = await checkSession();
         if (!active) {
           return;
         }
 
-        setAuthenticated(hasSession);
+        setViewer(session.user);
       } catch {
         if (!active) {
           return;
         }
 
-        setAuthenticated(false);
+        setViewer(null);
       } finally {
         if (active) {
           setSessionKnown(true);
@@ -51,17 +54,47 @@ export function App() {
     };
   }, []);
 
-  async function handleLogin(password: string) {
+  async function handleLogin(credentials: { username: string; password: string }) {
     setError(null);
     setIsSubmitting(true);
 
     try {
-      await login(password);
-      setAuthenticated(true);
+      const session = await login(credentials);
+      setViewer(session.user);
       navigate("/chat", { replace: true });
     } catch (nextError) {
+      setViewer(null);
       setError(getErrorMessage(nextError));
-      setAuthenticated(false);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleRegister(payload: {
+    username: string;
+    password: string;
+    confirmPassword: string;
+    inviteCode: string;
+  }) {
+    if (payload.password !== payload.confirmPassword) {
+      setError("两次输入的密码不一致。");
+      return;
+    }
+
+    setError(null);
+    setIsSubmitting(true);
+
+    try {
+      const session = await register({
+        username: payload.username,
+        password: payload.password,
+        inviteCode: payload.inviteCode,
+      });
+      setViewer(session.user);
+      navigate("/chat", { replace: true });
+    } catch (nextError) {
+      setViewer(null);
+      setError(getErrorMessage(nextError));
     } finally {
       setIsSubmitting(false);
     }
@@ -72,7 +105,7 @@ export function App() {
 
     try {
       await logout();
-      setAuthenticated(false);
+      setViewer(null);
       navigate("/", { replace: true });
     } catch (nextError) {
       setError(getErrorMessage(nextError));
@@ -85,9 +118,7 @@ export function App() {
         <section className="panel panel--loading">
           <p className="eyebrow">访问验证</p>
           <h1>正在恢复会话</h1>
-          <p className="muted">
-            正在检查当前登录状态，马上为你恢复聊天界面。
-          </p>
+          <p className="muted">正在检查当前登录状态，马上为你恢复聊天界面。</p>
         </section>
       </main>
     );
@@ -102,9 +133,15 @@ export function App() {
             <Navigate to="/chat" replace />
           ) : (
             <LoginPage
+              mode={mode}
+              onModeChange={(nextMode) => {
+                setMode(nextMode);
+                setError(null);
+              }}
               error={error}
               isSubmitting={isSubmitting}
-              onSubmit={handleLogin}
+              onLogin={handleLogin}
+              onRegister={handleRegister}
             />
           )
         }
@@ -117,10 +154,7 @@ export function App() {
           </AuthGuard>
         }
       />
-      <Route
-        path="*"
-        element={<Navigate to={authenticated ? "/chat" : "/"} replace />}
-      />
+      <Route path="*" element={<Navigate to={authenticated ? "/chat" : "/"} replace />} />
     </Routes>
   );
 }

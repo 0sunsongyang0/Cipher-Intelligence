@@ -4,61 +4,133 @@ import { describe, expect, it, vi } from "vitest";
 import { LoginPage } from "./LoginPage";
 
 describe("LoginPage", () => {
-  it("renders the aurora-glass login shell", () => {
-    render(<LoginPage onSubmit={vi.fn()} isSubmitting={false} error={null} />);
+  it("renders the aurora auth shell with login as the default mode", () => {
+    render(
+      <LoginPage
+        mode="login"
+        onModeChange={vi.fn()}
+        onLogin={vi.fn()}
+        onRegister={vi.fn()}
+        isSubmitting={false}
+        error={null}
+      />
+    );
 
     expect(screen.getByTestId("aurora-background")).toBeInTheDocument();
     expect(screen.getByTestId("login-shell-card")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "进入聊天界面" })).toBeInTheDocument();
-    expect(screen.getByText("私有工作区访问")).toBeInTheDocument();
-    expect(screen.getByText("共享 DeepSeek 后端")).toBeInTheDocument();
-    expect(screen.getByText("访问验证")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "登录", pressed: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("用户名")).toBeInTheDocument();
+    expect(screen.getByLabelText("密码")).toBeInTheDocument();
   });
 
-  it("submits the typed password", async () => {
+  it("submits username and password for login", async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn();
+    const onLogin = vi.fn();
 
-    render(<LoginPage onSubmit={onSubmit} isSubmitting={false} error={null} />);
+    render(
+      <LoginPage
+        mode="login"
+        onModeChange={vi.fn()}
+        onLogin={onLogin}
+        onRegister={vi.fn()}
+        isSubmitting={false}
+        error={null}
+      />
+    );
 
-    await user.type(screen.getByLabelText("访问密码"), "campus-secret");
-    await user.click(screen.getByRole("button", { name: "进入聊天" }));
+    await user.type(screen.getByLabelText("用户名"), "alice");
+    await user.type(screen.getByLabelText("密码"), "StrongPass123!");
+    await user.click(screen.getAllByRole("button", { name: "登录" })[1]!);
 
-    expect(onSubmit).toHaveBeenCalledWith("campus-secret");
+    expect(onLogin).toHaveBeenCalledWith({
+      username: "alice",
+      password: "StrongPass123!",
+    });
   });
 
-  it("prevents blank password submission", async () => {
+  it("switches to register mode and submits invite-code registration", async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn();
+    const onModeChange = vi.fn();
+    const onRegister = vi.fn();
 
-    render(<LoginPage onSubmit={onSubmit} isSubmitting={false} error={null} />);
+    const { rerender } = render(
+      <LoginPage
+        mode="login"
+        onModeChange={onModeChange}
+        onLogin={vi.fn()}
+        onRegister={onRegister}
+        isSubmitting={false}
+        error={null}
+      />
+    );
 
-    const button = screen.getByRole("button", { name: "进入聊天" });
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    expect(onModeChange).toHaveBeenCalledWith("register");
 
+    rerender(
+      <LoginPage
+        mode="register"
+        onModeChange={onModeChange}
+        onLogin={vi.fn()}
+        onRegister={onRegister}
+        isSubmitting={false}
+        error={null}
+      />
+    );
+
+    await user.type(screen.getByLabelText("用户名"), "new-user");
+    await user.type(screen.getByLabelText("密码"), "StrongPass123!");
+    await user.type(screen.getByLabelText("确认密码"), "StrongPass123!");
+    await user.type(screen.getByLabelText("邀请码"), "SMBU@2014520uu-");
+    await user.click(screen.getByRole("button", { name: "创建账号" }));
+
+    expect(onRegister).toHaveBeenCalledWith({
+      username: "new-user",
+      password: "StrongPass123!",
+      confirmPassword: "StrongPass123!",
+      inviteCode: "SMBU@2014520uu-",
+    });
+  });
+
+  it("disables register submit when confirm password is blank", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <LoginPage
+        mode="register"
+        onModeChange={vi.fn()}
+        onLogin={vi.fn()}
+        onRegister={vi.fn()}
+        isSubmitting={false}
+        error={null}
+      />
+    );
+
+    const button = screen.getByRole("button", { name: "创建账号" });
     expect(button).toBeDisabled();
 
-    await user.type(screen.getByLabelText("访问密码"), "   ");
+    await user.type(screen.getByLabelText("用户名"), "new-user");
+    await user.type(screen.getByLabelText("密码"), "StrongPass123!");
+    await user.type(screen.getByLabelText("邀请码"), "SMBU@2014520uu-");
 
     expect(button).toBeDisabled();
-    expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("submits surrounding whitespace exactly as entered", async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi.fn();
+  it("shows the submitting state for the active mode", () => {
+    render(
+      <LoginPage
+        mode="register"
+        onModeChange={vi.fn()}
+        onLogin={vi.fn()}
+        onRegister={vi.fn()}
+        isSubmitting={true}
+        error={null}
+      />
+    );
 
-    render(<LoginPage onSubmit={onSubmit} isSubmitting={false} error={null} />);
-
-    await user.type(screen.getByLabelText("访问密码"), "  campus-secret  ");
-    await user.click(screen.getByRole("button", { name: "进入聊天" }));
-
-    expect(onSubmit).toHaveBeenCalledWith("  campus-secret  ");
-  });
-
-  it("shows the submitting state", () => {
-    render(<LoginPage onSubmit={vi.fn()} isSubmitting={true} error={null} />);
-
-    expect(screen.getByLabelText("访问密码")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "正在进入..." })).toBeDisabled();
+    expect(screen.getByLabelText("用户名")).toBeDisabled();
+    expect(screen.getByLabelText("密码")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "创建中..." })).toBeDisabled();
   });
 });

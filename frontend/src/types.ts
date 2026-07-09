@@ -1,10 +1,30 @@
-export type ChatRole = "system" | "user" | "assistant";
+﻿export type ChatRole = "system" | "user" | "assistant";
+
+export type AuthUser = {
+  id: number;
+  username: string;
+  isAdmin: boolean;
+};
+
+export type SessionStatus = {
+  authenticated: boolean;
+  user: AuthUser | null;
+};
 
 export type LocalChatMessage = {
   id: string;
   role: ChatRole;
   content: string;
   createdAt: string;
+  attachments?: MessageAttachment[];
+};
+
+export type MessageAttachment = {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  meta?: string;
 };
 
 export type LocalConversation = {
@@ -13,6 +33,7 @@ export type LocalConversation = {
   createdAt: string;
   updatedAt: string;
   messages: LocalChatMessage[];
+  zipContext?: ZipConversationContext;
 };
 
 export type RuntimeStatus = "idle" | "loading" | "ready" | "error";
@@ -52,7 +73,10 @@ export const DEEPSEEK_MODEL_OPTIONS = [
   { id: "chatgpt-5.4-az", label: "ChatGPT 5.4", provider: "openai", groupLabel: "OpenAI" },
   { id: "claude-opus-4-7-official", label: "claude-opus-4-7", provider: "claude", groupLabel: "Claude" },
   { id: "claude-opus-4-6-aws", label: "claude-opus-4-6", provider: "claude", groupLabel: "Claude" },
-  { id: "claude-sonnet-4-6-az", label: "claude-sonnet-4-6", provider: "claude", groupLabel: "Claude" }
+  { id: "claude-sonnet-4-6-az", label: "claude-sonnet-4-6", provider: "claude", groupLabel: "Claude" },
+  { id: "claude-opus-4-7-backup", label: "claude-opus-4-7 备用", provider: "claude", groupLabel: "Claude" },
+  { id: "claude-opus-4-6-backup", label: "claude-opus-4-6 备用", provider: "claude", groupLabel: "Claude" },
+  { id: "claude-sonnet-4-6-backup", label: "claude-sonnet-4-6 备用", provider: "claude", groupLabel: "Claude" }
 ] as const satisfies readonly ModelOptionShape[];
 
 export const DEEPSEEK_MODEL_IDS = getModelIds(DEEPSEEK_MODEL_OPTIONS);
@@ -61,6 +85,7 @@ export type DeepSeekModelId = (typeof DEEPSEEK_MODEL_IDS)[number];
 export type DeepSeekModelOption = (typeof DEEPSEEK_MODEL_OPTIONS)[number];
 
 export const DEFAULT_DEEPSEEK_MODEL_ID: DeepSeekModelId = "deepseek-v4-flash";
+export const ZIP_UNSUPPORTED_MODEL_REASON = "当前模型不支持 ZIP 文件问答，请切换其他模型。";
 
 export const DEEPSEEK_MODEL_LABELS = getModelLabels(DEEPSEEK_MODEL_OPTIONS);
 export const MODEL_PROVIDER_LABELS = getProviderLabels(DEEPSEEK_MODEL_OPTIONS);
@@ -93,6 +118,10 @@ export function getDeepSeekModelsByProvider(provider: ModelProvider): DeepSeekMo
   return DEEPSEEK_MODEL_OPTIONS.filter((option) => option.provider === provider);
 }
 
+export function isZipContextSupportedModel(modelId: DeepSeekModelId): boolean {
+  return DEEPSEEK_MODEL_OPTIONS.some((option) => option.id === modelId);
+}
+
 export type ChatSettings = {
   systemPrompt: string;
   modelId?: string;
@@ -117,6 +146,80 @@ export type ServerChatState = {
 
 export type PersistedChatState = StoredChatState | ServerChatState;
 
+export type ZipConversationContext = {
+  zipContextId: string;
+  archiveName: string;
+  entryCount: number;
+  extractedEntryCount: number;
+  inventoryOnlyCount: number;
+  skippedEntryCount: number;
+  supportedByCurrentModel: boolean;
+  unsupportedReason: string | null;
+  pendingAttachment?: boolean;
+  uploading?: boolean;
+};
+
+export type UploadZipResult = ZipConversationContext;
+
+export type AdminOverview = {
+  services: {
+    backend: { running: boolean; pid?: number | null; label?: string; detail?: string };
+    tunnel: { running: boolean; pid?: number | null; label?: string; detail?: string };
+    autostartEnabled: boolean;
+  };
+  access: {
+    localUrl: string;
+    publicUrl: string;
+  };
+  models: {
+    providers: Array<{ provider: string; healthy: number; total: number }>;
+  };
+  files: {
+    uploadLimit: number;
+    zipEnabled: boolean;
+    zipContextCount: number;
+  };
+};
+
+export type AdminFileCacheClearResult = {
+  ok: boolean;
+  cleared: number;
+};
+
+export type AdminPromptSource = "default" | "override";
+export type AdminPromptStatus = "ready" | "fallback" | "error";
+
+export type AdminPrompt = {
+  prompt: string;
+  source: AdminPromptSource;
+  updatedAt: string | null;
+  status: AdminPromptStatus;
+  message: string | null;
+};
+
+export type AdminPromptMutationResult = AdminPrompt & {
+  ok: boolean;
+};
+
+export function buildZipAttachmentMeta(
+  context: Pick<
+    ZipConversationContext,
+    "entryCount" | "extractedEntryCount" | "inventoryOnlyCount" | "uploading"
+  >
+): string {
+  if (context.uploading) {
+    return "ZIP · 上传中...";
+  }
+
+  return [
+    `ZIP · 已扫描 ${context.entryCount} 个文件`,
+    `已提取内容 ${context.extractedEntryCount} 个`,
+    context.inventoryOnlyCount > 0 ? `仅保留清单 ${context.inventoryOnlyCount} 个` : null
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+}
+
 export type OutboundChatMessage = {
   role: ChatRole;
   content: string;
@@ -134,4 +237,3 @@ export type WebLlmInitProgress = {
   progress: number;
   text: string;
 };
-
