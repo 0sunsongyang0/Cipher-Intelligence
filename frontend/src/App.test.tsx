@@ -112,6 +112,31 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Cipher AI" })).toBeInTheDocument();
   });
 
+  it("keeps the user on the auth screen when login returns an unauthenticated payload", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.checkSession).mockResolvedValue({ authenticated: false, user: null });
+    vi.mocked(api.login).mockResolvedValue({
+      authenticated: false,
+      user: { id: 5, username: "alice", isAdmin: false },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await screen.findByTestId("login-shell-card");
+    await user.type(document.getElementById("login-username") as HTMLElement, "alice");
+    await user.type(document.getElementById("login-password") as HTMLElement, "StrongPass123!");
+    await user.click(document.querySelector('button[type="submit"]') as HTMLElement);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Login succeeded but did not return an authenticated session."
+    );
+    expect(screen.queryByRole("heading", { name: "Cipher AI" })).not.toBeInTheDocument();
+  });
+
   it("submits invite-code registration and redirects to chat", async () => {
     const user = userEvent.setup();
     vi.mocked(api.checkSession).mockResolvedValue({ authenticated: false, user: null });
@@ -139,6 +164,34 @@ describe("App", () => {
       inviteCode: "SMBU@2014520uu-",
     });
     expect(await screen.findByRole("heading", { name: "Cipher AI" })).toBeInTheDocument();
+  });
+
+  it("keeps the user on the auth screen when registration returns an invalid session", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.checkSession).mockResolvedValue({ authenticated: false, user: null });
+    vi.mocked(api.register).mockResolvedValue({
+      authenticated: true,
+      user: null,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await screen.findByTestId("login-shell-card");
+    await user.click(screen.getAllByRole("button")[1]!);
+    await user.type(document.getElementById("register-username") as HTMLElement, "new-user");
+    await user.type(document.getElementById("register-password") as HTMLElement, "StrongPass123!");
+    await user.type(document.getElementById("register-confirm-password") as HTMLElement, "StrongPass123!");
+    await user.type(document.getElementById("register-invite-code") as HTMLElement, "SMBU@2014520uu-");
+    await user.click(document.querySelector('button[type="submit"]') as HTMLElement);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Registration succeeded but did not return an authenticated session."
+    );
+    expect(screen.queryByRole("heading", { name: "Cipher AI" })).not.toBeInTheDocument();
   });
 
   it("renders the campus shell for authenticated chat visits with a real user", async () => {

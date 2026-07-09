@@ -18,6 +18,12 @@ function isAuthenticatedUserSession(session: SessionStatus): session is SessionS
   return session.authenticated && session.user !== null;
 }
 
+function getInvalidAuthSessionMessage(mode: AuthMode): string {
+  return mode === "login"
+    ? "Login succeeded but did not return an authenticated session."
+    : "Registration succeeded but did not return an authenticated session.";
+}
+
 export function App() {
   const navigate = useNavigate();
   const [sessionKnown, setSessionKnown] = useState(false);
@@ -31,6 +37,12 @@ export function App() {
   function applySession(session: SessionStatus) {
     setSessionAuthenticated(session.authenticated);
     setViewer(session.user);
+  }
+
+  function rejectInvalidAuthSession(mode: AuthMode) {
+    setSessionAuthenticated(false);
+    setViewer(null);
+    setError(getInvalidAuthSessionMessage(mode));
   }
 
   useEffect(() => {
@@ -71,12 +83,13 @@ export function App() {
 
     try {
       const session = await login(credentials);
-      applySession(session);
 
       if (!isAuthenticatedUserSession(session)) {
+        rejectInvalidAuthSession("login");
         return;
       }
 
+      applySession(session);
       navigate("/chat", { replace: true });
     } catch (nextError) {
       setSessionAuthenticated(false);
@@ -107,12 +120,13 @@ export function App() {
         password: payload.password,
         inviteCode: payload.inviteCode,
       });
-      applySession(session);
 
       if (!isAuthenticatedUserSession(session)) {
+        rejectInvalidAuthSession("register");
         return;
       }
 
+      applySession(session);
       navigate("/chat", { replace: true });
     } catch (nextError) {
       setSessionAuthenticated(false);

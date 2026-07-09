@@ -45,11 +45,16 @@ async function readErrorMessage(response: Response): Promise<string> {
 }
 
 function toRequestError(error: unknown): Error {
-  if (error instanceof Error) {
-    if (error.name === "AbortError") {
-      return new Error("Request was interrupted before the server responded.");
-    }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "AbortError"
+  ) {
+    return new Error("Request was interrupted before the server responded.");
+  }
 
+  if (error instanceof Error) {
     if (error instanceof TypeError) {
       return new Error(
         "Unable to reach the server. Please check whether the backend is running and reachable."
@@ -63,9 +68,15 @@ function toRequestError(error: unknown): Error {
 }
 
 export async function checkSession(): Promise<SessionStatus> {
-  const response = await fetch("/api/auth/session", {
-    credentials: "include"
-  });
+  let response: Response;
+
+  try {
+    response = await fetch("/api/auth/session", {
+      credentials: "include"
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
 
   if (!response.ok) {
     return { authenticated: false, user: null };
@@ -78,14 +89,20 @@ export async function login(payload: {
   username: string;
   password: string;
 }): Promise<SessionStatus> {
-  const response = await fetch("/api/auth/login", {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
-  });
+  let response: Response;
+
+  try {
+    response = await fetch("/api/auth/login", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
@@ -99,14 +116,20 @@ export async function register(payload: {
   password: string;
   inviteCode: string;
 }): Promise<SessionStatus> {
-  const response = await fetch("/api/auth/register", {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
-  });
+  let response: Response;
+
+  try {
+    response = await fetch("/api/auth/register", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
@@ -116,10 +139,16 @@ export async function register(payload: {
 }
 
 export async function logout(): Promise<void> {
-  const response = await fetch("/api/auth/logout", {
-    method: "POST",
-    credentials: "include"
-  });
+  let response: Response;
+
+  try {
+    response = await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "include"
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));

@@ -111,6 +111,48 @@ describe("api auth helpers", () => {
     });
   });
 
+  it.each([
+    ["checkSession", () => api.checkSession()],
+    ["login", () => api.login({ username: "alice", password: "StrongPass123!" })],
+    [
+      "register",
+      () =>
+        api.register({
+          username: "new-user",
+          password: "StrongPass123!",
+          inviteCode: "invite-code"
+        })
+    ],
+    ["logout", () => api.logout()]
+  ])("normalizes network failures for %s", async (_name, request) => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(request()).rejects.toThrow(
+      "Unable to reach the server. Please check whether the backend is running and reachable."
+    );
+  });
+
+  it.each([
+    ["checkSession", () => api.checkSession()],
+    ["login", () => api.login({ username: "alice", password: "StrongPass123!" })],
+    [
+      "register",
+      () =>
+        api.register({
+          username: "new-user",
+          password: "StrongPass123!",
+          inviteCode: "invite-code"
+        })
+    ],
+    ["logout", () => api.logout()]
+  ])("normalizes aborted requests for %s", async (_name, request) => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new DOMException("Aborted", "AbortError"));
+
+    await expect(request()).rejects.toThrow(
+      "Request was interrupted before the server responded."
+    );
+  });
+
   it("parses the admin overview payload", async () => {
     vi.stubGlobal(
       "fetch",
