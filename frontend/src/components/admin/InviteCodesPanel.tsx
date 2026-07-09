@@ -33,6 +33,14 @@ function formatDate(value: string | null): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString("zh-CN", { hour12: false });
 }
 
+function getRemainingCapacity(item: AdminInviteItem): string {
+  if (item.maxUses === null) {
+    return "不限";
+  }
+
+  return String(Math.max(0, item.maxUses - item.usedCount));
+}
+
 export function InviteCodesPanel() {
   const [items, setItems] = useState<AdminInviteItem[]>([]);
   const [form, setForm] = useState<InviteFormState>(INITIAL_FORM_STATE);
@@ -251,6 +259,10 @@ export function InviteCodesPanel() {
                   <div>
                     <dt>最多使用</dt>
                     <dd>{item.maxUses ?? "不限"}</dd>
+                  </div>
+                  <div>
+                    <dt>剩余可用</dt>
+                    <dd>{getRemainingCapacity(item)}</dd>
                   </div>
                   <div>
                     <dt>过期时间</dt>

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -121,5 +121,42 @@ describe("InviteCodesPanel", () => {
       expect(screen.queryByText("July batch")).not.toBeInTheDocument();
     });
     expect(api.getAdminInvites).toHaveBeenCalledTimes(3);
+  });
+
+  it("shows remaining invite capacity for capped and uncapped invites", async () => {
+    vi.mocked(api.getAdminInvites).mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          code: "SMBU@2014520uu-",
+          label: "July batch",
+          isActive: true,
+          maxUses: 5,
+          usedCount: 2,
+          expiresAt: null,
+          createdAt: "2026-07-09T10:00:00Z"
+        },
+        {
+          id: 2,
+          code: "OPEN-ENDED",
+          label: "Open batch",
+          isActive: true,
+          maxUses: null,
+          usedCount: 7,
+          expiresAt: null,
+          createdAt: "2026-07-09T11:00:00Z"
+        }
+      ]
+    });
+
+    render(<InviteCodesPanel />);
+
+    const cappedCard = (await screen.findByText("July batch")).closest("section");
+    const uncappedCard = screen.getByText("Open batch").closest("section");
+
+    expect(cappedCard).not.toBeNull();
+    expect(uncappedCard).not.toBeNull();
+    expect(within(cappedCard as HTMLElement).getByText("3")).toBeInTheDocument();
+    expect(within(uncappedCard as HTMLElement).getAllByText("不限")).toHaveLength(2);
   });
 });
