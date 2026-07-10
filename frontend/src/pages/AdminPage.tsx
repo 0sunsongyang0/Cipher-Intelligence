@@ -230,6 +230,10 @@ export function AdminPage({
   }
 
   function renderSection() {
+    if (section === "invites") {
+      return <InviteCodesPanel />;
+    }
+
     if (loading) {
       return renderLoadingCard("正在读取管理状态", "稍等一下，后台服务、隧道、模型和 ZIP 状态正在汇总。");
     }
@@ -285,10 +289,6 @@ export function AdminPage({
           onReset={handlePromptReset}
         />
       );
-    }
-
-    if (section === "invites") {
-      return <InviteCodesPanel />;
     }
 
     return (

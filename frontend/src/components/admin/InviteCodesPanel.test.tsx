@@ -1,9 +1,9 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../../lib/api";
-import { InviteCodesPanel } from "./InviteCodesPanel";
+import { InviteCodesPanel, parseMaxUses } from "./InviteCodesPanel";
 
 vi.mock("../../lib/api", () => ({
   createAdminInvite: vi.fn(),
@@ -61,6 +61,32 @@ describe("InviteCodesPanel", () => {
       isActive: true
     });
     expect(await screen.findByText("July batch")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["0", "最多使用次数必须至少为 1"],
+    ["-2", "最多使用次数必须至少为 1"]
+  ])("rejects invalid max uses value %s", async (maxUses, message) => {
+    const user = userEvent.setup();
+    vi.mocked(api.getAdminInvites).mockResolvedValue({ items: [] });
+
+    render(<InviteCodesPanel />);
+
+    await user.type(await screen.findByLabelText("邀请码"), "SMBU@2014520uu-");
+    const maxUsesInput = screen.getByLabelText("最多使用次数");
+
+    fireEvent.change(maxUsesInput, { target: { value: maxUses } });
+    fireEvent.submit(maxUsesInput.closest("form") as HTMLFormElement);
+
+    expect(api.createAdminInvite).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(message);
+  });
+
+  it("rejects non-finite max uses values", async () => {
+    expect(parseMaxUses("1e309")).toEqual({
+      value: null,
+      error: "最多使用次数必须是有效数字"
+    });
   });
 
   it("toggles and deletes an invite, reloading after each action", async () => {

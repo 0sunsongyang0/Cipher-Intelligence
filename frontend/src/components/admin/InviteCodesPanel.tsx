@@ -24,6 +24,26 @@ const INITIAL_FORM_STATE: InviteFormState = {
   isActive: true
 };
 
+export function parseMaxUses(value: string): { value: number | null; error: string | null } {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return { value: null, error: null };
+  }
+
+  const parsed = Number(trimmed);
+
+  if (!Number.isFinite(parsed)) {
+    return { value: null, error: "最多使用次数必须是有效数字" };
+  }
+
+  if (parsed <= 0) {
+    return { value: null, error: "最多使用次数必须至少为 1" };
+  }
+
+  return { value: parsed, error: null };
+}
+
 function formatDate(value: string | null): string {
   if (!value) {
     return "未设置";
@@ -70,15 +90,23 @@ export function InviteCodesPanel() {
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setNotice(null);
+
+    const maxUses = parseMaxUses(form.maxUses);
+
+    if (maxUses.error) {
+      setError(maxUses.error);
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
-    setNotice(null);
 
     try {
       await createAdminInvite({
         code: form.code.trim(),
         label: form.label.trim(),
-        maxUses: form.maxUses.trim() ? Number(form.maxUses) : null,
+        maxUses: maxUses.value,
         expiresAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : null,
         isActive: form.isActive
       });

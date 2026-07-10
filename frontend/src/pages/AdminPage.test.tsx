@@ -177,4 +177,17 @@ describe("AdminPage", () => {
     expect(await screen.findByRole("link", { name: "邀请码" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "邀请码管理" })).toBeInTheDocument();
   });
+  it("keeps invites usable when overview loading fails", async () => {
+    vi.mocked(api.getAdminOverview).mockRejectedValue(new Error("overview unavailable"));
+    vi.mocked(api.getAdminInvites).mockResolvedValue({ items: [] });
+
+    render(
+      <MemoryRouter initialEntries={["/invites"]}>
+        <AdminPage onLogout={() => undefined} />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole("heading", { name: "邀请码管理" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("overview unavailable");
+  });
 });
