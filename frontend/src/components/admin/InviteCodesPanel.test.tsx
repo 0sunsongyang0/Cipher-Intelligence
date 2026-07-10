@@ -89,6 +89,26 @@ describe("InviteCodesPanel", () => {
     });
   });
 
+  it("rejects fractional max uses values", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getAdminInvites).mockResolvedValue({ items: [] });
+
+    render(<InviteCodesPanel />);
+
+    await user.type(await screen.findByLabelText("邀请码"), "SMBU@2014520uu-");
+    const maxUsesInput = screen.getByLabelText("最多使用次数");
+
+    fireEvent.change(maxUsesInput, { target: { value: "1.5" } });
+    fireEvent.submit(maxUsesInput.closest("form") as HTMLFormElement);
+
+    expect(api.createAdminInvite).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("最多使用次数必须是正整数");
+    expect(parseMaxUses("1.5")).toEqual({
+      value: null,
+      error: "最多使用次数必须是正整数"
+    });
+  });
+
   it("toggles and deletes an invite, reloading after each action", async () => {
     const user = userEvent.setup();
     vi.mocked(api.getAdminInvites)

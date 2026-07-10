@@ -41,6 +41,10 @@ export function parseMaxUses(value: string): { value: number | null; error: stri
     return { value: null, error: "最多使用次数必须至少为 1" };
   }
 
+  if (!Number.isInteger(parsed)) {
+    return { value: null, error: "最多使用次数必须是正整数" };
+  }
+
   return { value: parsed, error: null };
 }
 
