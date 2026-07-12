@@ -4,6 +4,7 @@ import base64
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+import tempfile
 
 from fastapi import UploadFile
 
@@ -26,10 +27,17 @@ TEXT_EXTENSIONS = {
     ".css",
     ".yml",
     ".yaml",
+    ".xml",
+    ".log",
 }
 PDF_EXTENSIONS = {".pdf"}
 DOCX_EXTENSIONS = {".docx"}
+PPT_EXTENSIONS = {".ppt"}
+PPTX_EXTENSIONS = {".pptx"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+EVTX_EXTENSIONS = {".evtx"}
+BINARY_TEXT_FALLBACK_EXTENSIONS = {".pcap", ".bson"}
+_ocr_engine = None
 
 
 @dataclass
@@ -44,7 +52,8 @@ class ExtractedAttachment:
 class VisionImageAttachment:
     filename: str
     media_type: str
-    data_url: str
+    data_url: str = ""
+    raw_bytes: bytes | None = None
 
 
 @dataclass
@@ -109,6 +118,53 @@ def extract_docx_text(raw: bytes) -> str:
         raise AttachmentError("Unable to extract text from DOCX attachment.") from exc
 
 
+def extract_pptx_text(raw: bytes) -> str:
+    try:
+        from pptx import Presentation
+    except ImportError as exc:
+        raise AttachmentError(
+            "PPTX attachment support is unavailable on this server. Missing dependency: python-pptx."
+        ) from exc
+
+    try:
+        presentation = Presentation(BytesIO(raw))
+        parts: list[str] = []
+
+        for slide_index, slide in enumerate(presentation.slides, start=1):
+            slide_parts: list[str] = []
+
+            for shape in slide.shapes:
+                text = getattr(shape, "text", None)
+                if isinstance(text, str) and text.strip():
+                    slide_parts.append(text)
+
+                if getattr(shape, "has_table", False):
+                    table = shape.table
+                    for row in table.rows:
+                        for cell in row.cells:
+                            if cell.text.strip():
+                                slide_parts.append(cell.text)
+
+            notes_slide = None
+            if getattr(slide, "has_notes_slide", False):
+                notes_slide = slide.notes_slide
+
+            if notes_slide is not None:
+                notes_text_frame = getattr(getattr(notes_slide, "notes_text_frame", None), "text", None)
+                if isinstance(notes_text_frame, str) and notes_text_frame.strip():
+                    slide_parts.append(notes_text_frame)
+
+            normalized_slide_text = normalize_text("\n".join(slide_parts))
+            if normalized_slide_text:
+                parts.append(f"[Slide {slide_index}]\n{normalized_slide_text}")
+
+        return "\n\n".join(parts)
+    except AttachmentError:
+        raise
+    except Exception as exc:
+        raise AttachmentError("Unable to extract text from PPTX attachment.") from exc
+
+
 def extract_image_text(raw: bytes) -> str:
     try:
         from PIL import Image
@@ -124,10 +180,13 @@ def extract_image_text(raw: bytes) -> str:
             "Image attachment support is unavailable on this server. Missing dependency: rapidocr-onnxruntime."
         ) from exc
 
+    global _ocr_engine
+
     try:
         image = Image.open(BytesIO(raw)).convert("RGB")
-        engine = RapidOCR()
-        result, _ = engine(image)
+        if _ocr_engine is None:
+            _ocr_engine = RapidOCR()
+        result, _ = _ocr_engine(image)
         if not result:
             return ""
         return "\n".join(item[1] for item in result if len(item) > 1 and item[1])
@@ -137,9 +196,105 @@ def extract_image_text(raw: bytes) -> str:
         raise AttachmentError("Unable to extract text from image attachment.") from exc
 
 
+def _extract_utf16le_printable_strings(raw: bytes, *, min_length: int = 12) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+
+    for index in range(0, len(raw) - 1, 2):
+        low = raw[index]
+        high = raw[index + 1]
+        if high == 0 and (32 <= low <= 126 or low in (9, 10, 13)):
+            current.append(chr(low))
+            continue
+
+        candidate = "".join(current).strip()
+        if len(candidate) >= min_length:
+            parts.append(candidate)
+        current.clear()
+
+    candidate = "".join(current).strip()
+    if len(candidate) >= min_length:
+        parts.append(candidate)
+
+    return parts
+
+
+def _extract_ascii_printable_strings(raw: bytes, *, min_length: int = 8) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+
+    for byte in raw:
+        if 32 <= byte <= 126 or byte in (9, 10, 13):
+            current.append(chr(byte))
+            continue
+
+        candidate = "".join(current).strip()
+        if len(candidate) >= min_length:
+            parts.append(candidate)
+        current.clear()
+
+    candidate = "".join(current).strip()
+    if len(candidate) >= min_length:
+        parts.append(candidate)
+
+    return parts
+
+
+def extract_evtx_text(raw: bytes) -> str:
+    try:
+        from Evtx.Evtx import Evtx  # type: ignore
+    except ImportError:
+        Evtx = None
+
+    if Evtx is not None:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".evtx") as temp_file:
+                temp_file.write(raw)
+                temp_file.flush()
+                with Evtx(temp_file.name) as log:
+                    records = [record.xml() for record in log.records()]
+            normalized_records = normalize_text("\n\n".join(records))
+            if normalized_records:
+                return normalized_records
+        except Exception:
+            pass
+
+    fallback = normalize_text("\n".join(_extract_utf16le_printable_strings(raw)))
+    if fallback:
+        return fallback
+
+    raise AttachmentError("Unable to extract text from EVTX attachment.")
+
+
+def extract_binary_text(raw: bytes) -> str:
+    candidates = [
+        *dict.fromkeys(_extract_ascii_printable_strings(raw)),
+        *dict.fromkeys(_extract_utf16le_printable_strings(raw)),
+    ]
+    normalized = normalize_text("\n".join(candidates))
+    if normalized:
+        return normalized
+
+    raise AttachmentError("Unable to extract readable strings from binary attachment.")
+
+
 def build_image_data_url(raw: bytes, media_type: str) -> str:
     encoded = base64.b64encode(raw).decode("ascii")
     return f"data:{media_type};base64,{encoded}"
+
+
+def decode_image_data_url(data_url: str) -> bytes:
+    if not data_url.startswith("data:") or "," not in data_url:
+        raise AttachmentError("Invalid image payload stored in ZIP context.")
+
+    metadata, encoded = data_url.split(",", 1)
+    if ";base64" not in metadata:
+        raise AttachmentError("Invalid image payload stored in ZIP context.")
+
+    try:
+        return base64.b64decode(encoded)
+    except ValueError as exc:
+        raise AttachmentError("Invalid image payload stored in ZIP context.") from exc
 
 
 def guess_image_media_type(filename: str, fallback: str | None = None) -> str:
@@ -189,6 +344,12 @@ async def prepare_attachments(
         elif extension in DOCX_EXTENSIONS:
             text = extract_docx_text(raw)
             category = "docx"
+        elif extension in PPTX_EXTENSIONS:
+            text = extract_pptx_text(raw)
+            category = "pptx"
+        elif extension in PPT_EXTENSIONS:
+            text = extract_binary_text(raw)
+            category = "ppt"
         elif extension in IMAGE_EXTENSIONS:
             if enable_native_vision:
                 media_type = guess_image_media_type(filename, file.content_type)
@@ -203,6 +364,12 @@ async def prepare_attachments(
 
             text = extract_image_text(raw)
             category = "image-ocr"
+        elif extension in EVTX_EXTENSIONS:
+            text = extract_evtx_text(raw)
+            category = "evtx"
+        elif extension in BINARY_TEXT_FALLBACK_EXTENSIONS:
+            text = extract_binary_text(raw)
+            category = "binary"
         else:
             raise AttachmentError(f"Unsupported file type: {filename}")
 
@@ -235,6 +402,33 @@ async def prepare_attachments(
 
 async def extract_attachments(files: list[UploadFile]) -> list[ExtractedAttachment]:
     return (await prepare_attachments(files)).extracted
+
+
+def extract_zip_vision_ocr_items(
+    vision_images: list[VisionImageAttachment],
+) -> list[ExtractedAttachment]:
+    extracted: list[ExtractedAttachment] = []
+
+    for image in vision_images:
+        normalized = normalize_text(extract_image_text(decode_image_data_url(image.data_url)))
+        if not normalized:
+            continue
+
+        warning = None
+        if len(normalized) > MAX_FILE_CHARS:
+            normalized = normalized[:MAX_FILE_CHARS].rstrip()
+            warning = "Extracted content was truncated."
+
+        extracted.append(
+            ExtractedAttachment(
+                filename=image.filename,
+                category="image-ocr",
+                text=normalized,
+                warning=warning,
+            )
+        )
+
+    return extracted
 
 
 def build_attachment_block(items: list[ExtractedAttachment]) -> str:

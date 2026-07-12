@@ -1,4 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent, type RefObject } from "react";
+
 import type { PersistedChatState } from "../../types";
 
 type SettingsDrawerProps = {
@@ -55,7 +56,7 @@ export function SettingsDrawer({
   onClose,
   openerRef,
   open,
-  settings
+  settings: _settings
 }: SettingsDrawerProps) {
   const hasOpenedRef = useRef(false);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -116,9 +117,9 @@ export function SettingsDrawer({
         <dt>服务提供方</dt>
         <dd>DeepSeek 校园后端</dd>
         <dt>模型</dt>
-        <dd>由后端统一配置</dd>
+        <dd>由后端配置</dd>
         <dt>系统提示词</dt>
-        <dd>{settings.systemPrompt || "未设置"}</dd>
+        <dd>由后端配置</dd>
       </dl>
     </aside>
   );

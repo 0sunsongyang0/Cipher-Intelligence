@@ -679,6 +679,24 @@ describe("streamChat", () => {
     );
   });
 
+  it("maps Cloudflare HTML timeout pages to a friendly chat error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        "<html><head><title>524 A timeout occurred</title></head><body>cloudflare</body></html>",
+        {
+          status: 524,
+          headers: {
+            "Content-Type": "text/html"
+          }
+        }
+      )
+    );
+
+    await expect(api.streamChat([{ role: "user", content: "Hello" }])).rejects.toThrow(
+      "服务器处理超时了，请稍等一下再试。"
+    );
+  });
+
   it("surfaces validation messages from structured backend errors", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -764,6 +782,141 @@ describe("uploadZip", () => {
     expect(formData.get("conversationId")).toBe("conversation-1");
     expect(formData.get("model")).toBe("deepseek-v4-flash");
     expect(formData.get("file")).toBe(zipFile);
+  });
+
+  it("polls ZIP status until parsing finishes", async () => {
+    vi.spyOn(globalThis, "setTimeout").mockImplementation((((callback: TimerHandler) => {
+      if (typeof callback === "function") {
+        callback();
+      }
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown) as typeof setTimeout);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            zipContextId: "zip-context-1",
+            archiveName: "project-docs.zip",
+            entryCount: 0,
+            extractedEntryCount: 0,
+            inventoryOnlyCount: 0,
+            skippedEntryCount: 0,
+            supportedByCurrentModel: true,
+            unsupportedReason: null,
+            uploading: true,
+            errorMessage: null
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            zipContextId: "zip-context-1",
+            archiveName: "project-docs.zip",
+            entryCount: 2,
+            extractedEntryCount: 1,
+            inventoryOnlyCount: 1,
+            skippedEntryCount: 0,
+            supportedByCurrentModel: true,
+            unsupportedReason: null,
+            uploading: false,
+            errorMessage: null
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        )
+      );
+
+    const promise = api.uploadZip(new File(["PK"], "project-docs.zip", { type: "application/zip" }), {
+      conversationId: "conversation-1",
+      model: "deepseek-v4-flash"
+    });
+
+    await expect(promise).resolves.toMatchObject({
+      zipContextId: "zip-context-1",
+      extractedEntryCount: 1,
+      uploading: false
+    });
+
+    expect(fetchSpy.mock.calls[1]?.[0]).toBe(
+      "/api/upload_zip/zip-context-1?conversationId=conversation-1&model=deepseek-v4-flash"
+    );
+  });
+
+  it("surfaces ZIP parse errors reported by the status endpoint", async () => {
+    vi.spyOn(globalThis, "setTimeout").mockImplementation((((callback: TimerHandler) => {
+      if (typeof callback === "function") {
+        callback();
+      }
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown) as typeof setTimeout);
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            zipContextId: "zip-context-1",
+            archiveName: "project-docs.zip",
+            entryCount: 0,
+            extractedEntryCount: 0,
+            inventoryOnlyCount: 0,
+            skippedEntryCount: 0,
+            supportedByCurrentModel: true,
+            unsupportedReason: null,
+            uploading: true,
+            errorMessage: null
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            zipContextId: "zip-context-1",
+            archiveName: "project-docs.zip",
+            entryCount: 0,
+            extractedEntryCount: 0,
+            inventoryOnlyCount: 0,
+            skippedEntryCount: 0,
+            supportedByCurrentModel: true,
+            unsupportedReason: null,
+            uploading: false,
+            errorMessage: "Invalid ZIP archive: project-docs.zip"
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        )
+      );
+
+    const promise = api
+      .uploadZip(new File(["PK"], "project-docs.zip", { type: "application/zip" }), {
+        conversationId: "conversation-1",
+        model: "deepseek-v4-flash"
+      })
+      .catch((error: unknown) => {
+        throw error;
+      });
+
+    await expect(promise).rejects.toThrow("Invalid ZIP archive: project-docs.zip");
   });
 
   it("surfaces backend detail when zip upload fails", async () => {

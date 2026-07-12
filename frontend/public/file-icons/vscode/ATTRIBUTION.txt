@@ -1,0 +1,9 @@
+These attachment icons are derived from vscode-icons:
+https://github.com/vscode-icons/vscode-icons
+
+Repository license notes:
+- Source code: MIT
+- Icons: CC BY-SA 4.0 unless otherwise noted
+- Brand icons remain subject to their respective copyrights and trademarks
+
+This project uses a small local subset of the repository's SVG file icons.

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+﻿import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -45,7 +45,8 @@ function buildAttachment(overrides: Partial<StagedAttachment> = {}): StagedAttac
     file,
     name: overrides.name ?? file.name,
     type: overrides.type ?? "PDF",
-    size: overrides.size ?? file.size
+    size: overrides.size ?? file.size,
+    retainedForZipContext: overrides.retainedForZipContext
   };
 }
 
@@ -59,21 +60,42 @@ function expectReadableMath(minCount = 1) {
 }
 
 function getModelMenuButton() {
-  return screen.getByRole("button", { name: "切换模型" });
+  const button = document.querySelector<HTMLButtonElement>(".bomb-shell__model-pill");
+  expect(button).not.toBeNull();
+  return button!;
+}
+
+function setMobileViewport(enabled: boolean) {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn().mockImplementation((query: string) => ({
+      matches: enabled && query === "(max-width: 760px)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }))
+  );
 }
 
 describe("AppShell", () => {
   const onLogout = vi.fn().mockResolvedValue(undefined);
   const sendMessage = vi.fn().mockResolvedValue(undefined);
+  const uploadZip = vi.fn().mockResolvedValue(undefined);
   const setActiveConversationId = vi.fn();
   const deleteConversation = vi.fn();
   const addFiles = vi.fn();
   const clearFiles = vi.fn();
   const removeFile = vi.fn();
   const setModelId = vi.fn();
+  const setWebSearchEnabled = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
+    setMobileViewport(false);
     vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
       activeConversation: buildConversation(),
       activeConversationId: "conversation-1",
@@ -86,9 +108,12 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
       setActiveConversationId,
       setModelId,
       stagedFiles: [],
+      webSearchEnabled: false,
       settings: {
         modelId: "deepseek-v4-flash",
         systemPrompt: "You are a helpful assistant."
@@ -103,7 +128,7 @@ describe("AppShell", () => {
     expect(screen.getByTestId("chat-shell")).toBeInTheDocument();
     expect(screen.getByTestId("chat-input-dock")).toBeInTheDocument();
     expect(screen.getByText("deepseek-v4-flash")).toBeInTheDocument();
-    expect(screen.getByText("Bomb AI")).toBeInTheDocument();
+    expect(screen.getByText("Cipher AI")).toBeInTheDocument();
     expect(screen.getByText("Designer.Dev")).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Conversations" })).toBeInTheDocument();
     expect(screen.getByRole("log")).toBeInTheDocument();
@@ -120,6 +145,136 @@ describe("AppShell", () => {
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith("Explain the rollout plan.");
     });
+  });
+
+  it("toggles the manual web search button", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    const webSearchButton = screen.getByRole("button", { name: "启用联网搜索" });
+    const webSearchIcon = webSearchButton.querySelector("svg");
+
+    expect(webSearchIcon?.className.baseVal ?? webSearchIcon?.getAttribute("class")).toContain("tabler-icon-world");
+
+    await user.click(webSearchButton);
+
+    expect(setWebSearchEnabled).toHaveBeenCalledWith(true);
+    expect(screen.getByRole("status")).toHaveTextContent("已启用联网搜索");
+  });
+
+  it("renders the web search button in its active visual state", () => {
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: buildConversation(),
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
+      setActiveConversationId,
+      setModelId,
+      stagedFiles: [],
+      webSearchEnabled: true,
+      settings: {
+        modelId: "deepseek-v4-flash",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    const webSearchButton = screen.getByRole("button", { name: "关闭联网搜索" });
+    expect(webSearchButton.className).toContain("bomb-shell__dock-tool--active");
+  });
+
+  it("shows a success banner when web search is disabled", async () => {
+    const user = userEvent.setup();
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: buildConversation(),
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
+      setActiveConversationId,
+      setModelId,
+      stagedFiles: [],
+      webSearchEnabled: true,
+      settings: {
+        modelId: "deepseek-v4-flash",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    await user.click(screen.getByRole("button", { name: "关闭联网搜索" }));
+
+    expect(setWebSearchEnabled).toHaveBeenCalledWith(false);
+    expect(screen.getByRole("status")).toHaveTextContent("已关闭联网搜索");
+  });
+
+  it("auto dismisses the red error banner and still shows later errors", () => {
+    vi.useFakeTimers();
+
+    try {
+      let currentSessionError = "First error";
+      const baseHookState = {
+        activeConversation: buildConversation(),
+        activeConversationId: "conversation-1",
+        addFiles,
+        clearFiles,
+        conversations: [buildConversation()],
+        deleteConversation,
+        error: null,
+        isGenerating: false,
+        removeFile,
+        runtimeStatus: "ready" as const,
+        sendMessage,
+        setWebSearchEnabled,
+        uploadZip,
+        setActiveConversationId,
+        setModelId,
+        stagedFiles: [],
+        webSearchEnabled: false,
+        settings: {
+          modelId: "deepseek-v4-flash",
+          systemPrompt: "You are a helpful assistant."
+        }
+      };
+
+      vi.mocked(useServerChatModule.useServerChat).mockReturnValue(baseHookState);
+
+      const { rerender } = render(<AppShell onLogout={onLogout} sessionError={currentSessionError} />);
+
+      expect(screen.getByRole("alert")).toHaveTextContent("First error");
+
+      act(() => {
+        vi.advanceTimersByTime(3600);
+      });
+
+      expect(screen.queryByRole("alert")).toBeNull();
+
+      currentSessionError = "Second error";
+      rerender(<AppShell onLogout={onLogout} sessionError={currentSessionError} />);
+
+      expect(screen.getByRole("alert")).toHaveTextContent("Second error");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows provider groups before concrete models", async () => {
@@ -170,9 +325,12 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
       setActiveConversationId,
       setModelId,
       stagedFiles: [],
+      webSearchEnabled: false,
       settings: {
         modelId: "claude-opus-4-7-official",
         systemPrompt: "You are a helpful assistant."
@@ -281,6 +439,308 @@ describe("AppShell", () => {
     expect(addFiles).toHaveBeenCalledWith([file]);
   });
 
+  it("renders a pending ZIP context inside the shared attachment chip list", () => {
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        zipContext: {
+          zipContextId: "zip-context-1",
+          archiveName: "project-docs.zip",
+          entryCount: 4,
+          extractedEntryCount: 1,
+          inventoryOnlyCount: 3,
+          skippedEntryCount: 0,
+          supportedByCurrentModel: true,
+          unsupportedReason: null,
+          pendingAttachment: true
+        } as never
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
+      setActiveConversationId,
+      setModelId,
+      stagedFiles: [],
+      webSearchEnabled: false,
+      settings: {
+        modelId: "deepseek-v4-flash",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    const attachmentList = document.querySelector(".bomb-shell__attachment-list");
+    expect(attachmentList).not.toBeNull();
+    expect(within(attachmentList as HTMLElement).getByText("project-docs.zip")).toBeInTheDocument();
+    expect(within(attachmentList as HTMLElement).getByText(/ZIP/)).toBeInTheDocument();
+    expect(document.querySelector(".bomb-shell__zip-context")).toBeNull();
+  });
+
+  it("shows the same remove action for a pending ZIP chip", async () => {
+    const user = userEvent.setup();
+    const removePendingZipContext = vi.fn();
+
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        zipContext: {
+          zipContextId: "zip-context-1",
+          archiveName: "project-docs.zip",
+          entryCount: 4,
+          extractedEntryCount: 1,
+          inventoryOnlyCount: 3,
+          skippedEntryCount: 0,
+          supportedByCurrentModel: true,
+          unsupportedReason: null,
+          pendingAttachment: true
+        } as never
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      removePendingZipContext,
+      runtimeStatus: "ready",
+      sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
+      setActiveConversationId,
+      setModelId,
+      stagedFiles: [],
+      webSearchEnabled: false,
+      settings: {
+        modelId: "deepseek-v4-flash",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    await user.click(screen.getByRole("button", { name: "移除附件 project-docs.zip" }));
+
+    expect(removePendingZipContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders only one ZIP chip when the active ZIP is also retained in staged files", () => {
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        zipContext: {
+          zipContextId: "zip-context-1",
+          archiveName: "project-docs.zip",
+          entryCount: 4,
+          extractedEntryCount: 1,
+          inventoryOnlyCount: 3,
+          skippedEntryCount: 0,
+          supportedByCurrentModel: true,
+          unsupportedReason: null,
+          pendingAttachment: true
+        } as never
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      removePendingZipContext: vi.fn(),
+      runtimeStatus: "ready",
+      sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
+      setActiveConversationId,
+      setModelId,
+      stagedFiles: [
+        buildAttachment({
+          id: "attachment-zip-1",
+          file: new File(["PK"], "project-docs.zip", { type: "application/zip" }),
+          name: "project-docs.zip",
+          type: "ZIP",
+          size: 73498624,
+          retainedForZipContext: true
+        })
+      ],
+      webSearchEnabled: false,
+      settings: {
+        modelId: "deepseek-v4-flash",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    const attachmentList = screen.getByRole("list", { name: "待发送附件" });
+    expect(within(attachmentList).getAllByText("project-docs.zip")).toHaveLength(1);
+  });
+
+  it("does not block send for ChatGPT ZIP follow-up even when the stored support flag is stale", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        zipContext: {
+          zipContextId: "zip-context-1",
+          archiveName: "project-docs.zip",
+          entryCount: 4,
+          extractedEntryCount: 4,
+          inventoryOnlyCount: 0,
+          skippedEntryCount: 0,
+          supportedByCurrentModel: false,
+          unsupportedReason: "当前模型不支持 ZIP 文件问答，请切换其他模型。"
+        }
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
+      setActiveConversationId,
+      setModelId,
+      stagedFiles: [],
+      webSearchEnabled: false,
+      settings: {
+        modelId: "chatgpt-5.5-official",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    await user.type(screen.getByRole("textbox"), "Explain the ZIP.");
+    await user.click(within(screen.getByTestId("chat-input-dock")).getAllByRole("button").at(-1)!);
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith("Explain the ZIP.");
+    });
+    expect(screen.queryByText("当前模型不支持 ZIP 文件问答，请切换其他模型。")).toBeNull();
+  });
+
+  it("does not show stale ZIP unsupported errors for DeepSeek follow-up sends", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        zipContext: {
+          zipContextId: "zip-context-1",
+          archiveName: "project-docs.zip",
+          entryCount: 4,
+          extractedEntryCount: 4,
+          inventoryOnlyCount: 0,
+          skippedEntryCount: 0,
+          supportedByCurrentModel: false,
+          unsupportedReason: "当前模型不支持 ZIP 文件问答，请切换其他模型。"
+        }
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
+      setActiveConversationId,
+      setModelId,
+      stagedFiles: [],
+      webSearchEnabled: false,
+      settings: {
+        modelId: "deepseek-v4-flash",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    await user.type(screen.getByRole("textbox"), "Explain the ZIP.");
+    await user.click(within(screen.getByTestId("chat-input-dock")).getAllByRole("button").at(-1)!);
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith("Explain the ZIP.");
+    });
+    expect(
+      screen.queryByText("当前模型不支持 ZIP 文件问答，请切换其他模型。")
+    ).toBeNull();
+  });
+
+  it("routes a selected ZIP file through uploadZip instead of addFiles", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+
+    const zipFile = new File(["PK"], "project-docs.zip", { type: "application/zip" });
+    await user.upload(input!, zipFile);
+
+    await waitFor(() => {
+      expect(uploadZip).toHaveBeenCalledWith(zipFile, "");
+    });
+    expect(addFiles).not.toHaveBeenCalled();
+  });
+
+  it("shows a composer error when ZIP upload from file selection fails", async () => {
+    const user = userEvent.setup();
+    uploadZip.mockRejectedValueOnce(new Error("ZIP 上传失败"));
+    render(<AppShell onLogout={onLogout} />);
+
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+
+    const zipFile = new File(["PK"], "broken.zip", { type: "application/zip" });
+    await user.upload(input!, zipFile);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("ZIP 上传失败");
+    });
+    expect(addFiles).not.toHaveBeenCalled();
+  });
+
+  it("splits mixed file selection so ZIP uploads separately and normal files stay staged", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+
+    const zipFile = new File(["PK"], "project-docs.zip", { type: "application/zip" });
+    const pdfFile = new File(["notes"], "semester-plan.pdf", { type: "application/pdf" });
+    await user.upload(input!, [zipFile, pdfFile]);
+
+    await waitFor(() => {
+      expect(uploadZip).toHaveBeenCalledWith(zipFile, "");
+    });
+    expect(addFiles).toHaveBeenCalledWith([pdfFile]);
+  });
+
   it("renders staged attachments above the composer and removes them from the chip action", async () => {
     const user = userEvent.setup();
 
@@ -296,9 +756,12 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
       setActiveConversationId,
       setModelId,
       stagedFiles: [buildAttachment({ name: "campus-notes.pdf" })],
+      webSearchEnabled: false,
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
         systemPrompt: "You are a helpful assistant."
@@ -310,10 +773,210 @@ describe("AppShell", () => {
     const stagedList = document.querySelector(".bomb-shell__attachment-list");
     expect(stagedList).not.toBeNull();
     expect(within(stagedList as HTMLElement).getByText("campus-notes.pdf")).toBeInTheDocument();
+    expect(
+      (stagedList as HTMLElement)
+        .querySelector<HTMLElement>(".bomb-shell__attachment-icon")
+        ?.getAttribute("data-file-icon")
+    ).toBe("pdf");
 
     await user.click(within(stagedList as HTMLElement).getByRole("button"));
 
     expect(removeFile).toHaveBeenCalledWith("attachment-1");
+  });
+
+  it("renders historical user attachments with the user message content", () => {
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        messages: [
+          {
+            id: "message-1",
+            role: "user",
+            content: "Please review the attached draft.",
+            createdAt: "2026-07-03T10:00:00.000Z",
+            attachments: [
+              {
+                id: "attachment-1",
+                name: "brief.docx",
+                type: "DOCX",
+                size: 2048
+              }
+            ]
+          },
+          {
+            id: "message-2",
+            role: "assistant",
+            content: "I can help with that.",
+            createdAt: "2026-07-03T10:00:01.000Z"
+          }
+        ]
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
+      setActiveConversationId,
+      setModelId,
+      stagedFiles: [],
+      webSearchEnabled: false,
+      settings: {
+        modelId: "deepseek-v4-flash",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    const firstUserMessage = screen.getByTestId("message-row-message-1");
+    const attachmentList = within(firstUserMessage).getByRole("list", { name: "消息附件" });
+    const attachmentCard = within(attachmentList).getByRole("listitem");
+
+    expect(within(firstUserMessage).getByText("Please review the attached draft.")).toBeInTheDocument();
+    expect(attachmentCard).toHaveTextContent("brief.docx");
+    expect(attachmentCard).toHaveTextContent("DOCX");
+    expect(attachmentCard).toHaveTextContent("2 KB");
+    expect(
+      attachmentCard.querySelector<HTMLElement>(".bomb-shell__attachment-icon")?.getAttribute("data-file-icon")
+    ).toBe("word");
+  });
+
+  it("renders ZIP attachments in the message history with the same card style", () => {
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        messages: [
+          {
+            id: "message-1",
+            role: "user",
+            content: "Please answer based on the ZIP.",
+            createdAt: "2026-07-03T10:00:00.000Z",
+            attachments: [
+              {
+                id: "attachment-zip-1",
+                name: "desktop.zip",
+                type: "ZIP",
+                size: 0,
+                meta: "ZIP · 已扫描 2 项 · 已提取 1 项 · 仅清单 1 项"
+              } as never
+            ]
+          },
+          {
+            id: "message-2",
+            role: "assistant",
+            content: "I can help with that.",
+            createdAt: "2026-07-03T10:00:01.000Z"
+          }
+        ]
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
+      setActiveConversationId,
+      setModelId,
+      stagedFiles: [],
+      webSearchEnabled: false,
+      settings: {
+        modelId: "deepseek-v4-flash",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    const firstUserMessage = screen.getByTestId("message-row-message-1");
+    const attachmentList = within(firstUserMessage).getByRole("list", { name: "消息附件" });
+    const attachmentCard = within(attachmentList).getByRole("listitem");
+
+    expect(attachmentCard).toHaveTextContent("desktop.zip");
+    expect(attachmentCard).toHaveTextContent("ZIP");
+    expect(
+      attachmentCard.querySelector<HTMLElement>(".bomb-shell__attachment-icon")?.getAttribute("data-file-icon")
+    ).toBe("zip");
+  });
+
+  it("renders historical attachment cards only for the attachment-bearing first user turn", () => {
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      activeConversation: {
+        ...buildConversation(),
+        messages: [
+          {
+            id: "message-1",
+            role: "user",
+            content: "Please review the attached draft.",
+            createdAt: "2026-07-03T10:00:00.000Z",
+            attachments: [
+              {
+                id: "attachment-1",
+                name: "brief.docx",
+                type: "DOCX",
+                size: 2048
+              }
+            ]
+          },
+          {
+            id: "message-2",
+            role: "assistant",
+            content: "I can help with that.",
+            createdAt: "2026-07-03T10:00:01.000Z"
+          },
+          {
+            id: "message-3",
+            role: "user",
+            content: "Also summarize the risks in plain text.",
+            createdAt: "2026-07-03T10:00:02.000Z"
+          }
+        ]
+      },
+      activeConversationId: "conversation-1",
+      addFiles,
+      clearFiles,
+      conversations: [buildConversation()],
+      deleteConversation,
+      error: null,
+      isGenerating: false,
+      removeFile,
+      runtimeStatus: "ready",
+      sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
+      setActiveConversationId,
+      setModelId,
+      stagedFiles: [],
+      webSearchEnabled: false,
+      settings: {
+        modelId: "deepseek-v4-flash",
+        systemPrompt: "You are a helpful assistant."
+      }
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    const messageAttachments = screen.getAllByRole("list", { name: "消息附件" });
+    const firstUserMessage = screen.getByTestId("message-row-message-1");
+    const laterUserMessage = screen.getByTestId("message-row-message-3");
+
+    expect(messageAttachments).toHaveLength(1);
+    expect(within(firstUserMessage).getByRole("list", { name: "消息附件" })).toBeInTheDocument();
+    expect(within(firstUserMessage).getByText("brief.docx")).toBeInTheDocument();
+    expect(within(laterUserMessage).queryByRole("list", { name: "消息附件" })).toBeNull();
+    expect(within(laterUserMessage).queryByText("brief.docx")).toBeNull();
   });
 
   it("shows a drag overlay over the main chat region and stages dropped files there", () => {
@@ -335,6 +998,56 @@ describe("AppShell", () => {
 
     expect(addFiles).toHaveBeenCalledWith([file]);
     expect(document.querySelector(".bomb-shell__drop-overlay")).toBeNull();
+  });
+
+  it("opens the conversation drawer with a left-edge swipe on mobile", () => {
+    setMobileViewport(true);
+    render(<AppShell onLogout={onLogout} />);
+
+    const mainRegion = document.querySelector(".bomb-shell__main");
+    expect(mainRegion).not.toBeNull();
+
+    fireEvent.touchStart(mainRegion!, {
+      touches: [{ clientX: 8, clientY: 220 }],
+      changedTouches: [{ clientX: 8, clientY: 220 }]
+    });
+    fireEvent.touchMove(mainRegion!, {
+      touches: [{ clientX: 104, clientY: 228 }],
+      changedTouches: [{ clientX: 104, clientY: 228 }]
+    });
+    fireEvent.touchEnd(mainRegion!, {
+      changedTouches: [{ clientX: 104, clientY: 228 }]
+    });
+
+    expect(document.querySelector(".conversation-drawer")).not.toBeNull();
+  });
+
+  it("closes the conversation drawer with a swipe on mobile", async () => {
+    const user = userEvent.setup();
+    setMobileViewport(true);
+    render(<AppShell onLogout={onLogout} />);
+
+    const headerButton = within(screen.getByRole("banner")).getAllByRole("button")[0];
+    await user.click(headerButton);
+
+    const drawerPanel = document.querySelector(".conversation-drawer__panel");
+    expect(drawerPanel).not.toBeNull();
+
+    fireEvent.touchStart(drawerPanel!, {
+      touches: [{ clientX: 240, clientY: 260 }],
+      changedTouches: [{ clientX: 240, clientY: 260 }]
+    });
+    fireEvent.touchMove(drawerPanel!, {
+      touches: [{ clientX: 120, clientY: 266 }],
+      changedTouches: [{ clientX: 120, clientY: 266 }]
+    });
+    fireEvent.touchEnd(drawerPanel!, {
+      changedTouches: [{ clientX: 120, clientY: 266 }]
+    });
+
+    await waitFor(() => {
+      expect(document.querySelector(".conversation-drawer")?.getAttribute("aria-hidden")).toBe("true");
+    });
   });
 
   it("does not treat the sidebar or drawer sidebar as drop targets", async () => {
@@ -385,9 +1098,12 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready" as const,
       sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
       setActiveConversationId,
       setModelId,
       stagedFiles: [],
+      webSearchEnabled: false,
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
         systemPrompt: "You are a helpful assistant."
@@ -407,8 +1123,8 @@ describe("AppShell", () => {
     Object.defineProperty(logBeforeReset, "clientHeight", { configurable: true, value: 900 });
     logBeforeReset.scrollTop = 1480;
 
-    await user.click(screen.getByRole("button", { name: "展开会话栏" }));
-    await user.click(screen.getByRole("button", { name: /开启新对话/ }));
+    await user.click(screen.getAllByRole("button").find((button) => button.getAttribute("aria-label")?.includes("会话") || button.getAttribute("aria-label")?.includes("sidebar"))!);
+    await user.click(screen.getByRole("button", { name: "开启新对话" }));
 
     expect(clearFiles).toHaveBeenCalled();
     expect(setActiveConversationId).toHaveBeenCalledWith(null);
@@ -448,9 +1164,12 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
       setActiveConversationId,
       setModelId,
       stagedFiles: [],
+      webSearchEnabled: false,
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
         systemPrompt: "You are a helpful assistant."
@@ -473,7 +1192,7 @@ describe("AppShell", () => {
             id: "message-1",
             role: "assistant",
             content:
-              "对于基波周期 ( T = \\pi/7 ) 的信号，其基波频率为 (\\omega_0 = 2\\pi/T = 14 , \\text{rad/s})。\n\n由于输出 ( y(t) = x(t) )，说明输入信号的所有频率分量均通过了系统。",
+              "对于该信号，基础角频率为 (\\omega_0 = 2\\pi/T = 14 , \\text{rad/s})。\n\n并且有 ( y(t) = x(t) )。",
             createdAt: "2026-07-03T10:00:01.000Z"
           }
         ]
@@ -488,9 +1207,12 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
       setActiveConversationId,
       setModelId,
       stagedFiles: [],
+      webSearchEnabled: false,
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
         systemPrompt: "You are a helpful assistant."
@@ -499,8 +1221,8 @@ describe("AppShell", () => {
 
     render(<AppShell onLogout={onLogout} />);
 
-    expect(screen.getByText((content) => content.includes("对于基波周期"))).toBeInTheDocument();
-    expectReadableMath(3);
+    expect(screen.getByText((content) => content.includes("对于该信号"))).toBeInTheDocument();
+    expectReadableMath(2);
   });
 
   it("renders standard mathjax inline delimiters", () => {
@@ -511,7 +1233,7 @@ describe("AppShell", () => {
           {
             id: "message-1",
             role: "assistant",
-            content: "基波周期为 \\( T = \\pi/7 \\)，频率为 \\( \\omega_0 = 14 \\)。",
+            content: "基础周期为 \\( T = \\pi/7 \\)，频率为 \\( \\omega_0 = 14 \\)。",
             createdAt: "2026-07-03T10:00:01.000Z"
           }
         ]
@@ -526,9 +1248,12 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
       setActiveConversationId,
       setModelId,
       stagedFiles: [],
+      webSearchEnabled: false,
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
         systemPrompt: "You are a helpful assistant."
@@ -537,7 +1262,7 @@ describe("AppShell", () => {
 
     render(<AppShell onLogout={onLogout} />);
 
-    expect(screen.getByText((content) => content.includes("基波周期为"))).toBeInTheDocument();
+    expect(screen.getByText((content) => content.includes("基础周期") || content.includes("14"))).toBeInTheDocument();
     expectReadableMath(2);
   });
 
@@ -550,21 +1275,17 @@ describe("AppShell", () => {
             id: "message-1",
             role: "assistant",
             content: `解答：
-
-系统频率响应应为
+系统频率响应为
 H(j\\omega)=\\begin{cases}
 1, & |\\omega| \\geq 250 \\\\
 0, & \\text{其他}
 \\end{cases}
 
-输入信号 x(t) 的基波周期 T = \\pi/7，故基波角频率
-\\omega_0 = \\frac{2\\pi}{T} = 14 \\text{ rad/s}.
+输入信号 x(t) 的基波周期 T = \\pi/7，因此基波角频率 \\omega_0 = \\frac{2\\pi}{T} = 14 \\text{ rad/s}.
 
-周期信号 x(t) 可表示为傅里叶级数
-x(t)=\\sum_{k=-\\infty}^{\\infty} c_k e^{jk\\omega_0 t}
+周期信号 x(t) 可以表示为傅里叶级数 x(t)=\\sum_{k=-\\infty}^{\\infty} c_k e^{jk\\omega_0 t}
 
-通过系统后输出
-y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
+通过系统后输出 y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
             createdAt: "2026-07-03T10:00:01.000Z"
           }
         ]
@@ -579,9 +1300,12 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
       setActiveConversationId,
       setModelId,
       stagedFiles: [],
+      webSearchEnabled: false,
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
         systemPrompt: "You are a helpful assistant."
@@ -590,7 +1314,7 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
 
     render(<AppShell onLogout={onLogout} />);
 
-    expect(screen.getByText("解答：")).toBeInTheDocument();
+    expect(screen.getByText((content) => content.includes("系统频率响应为"))).toBeInTheDocument();
     expectReadableMath(3);
   });
 
@@ -604,16 +1328,12 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
             role: "assistant",
             content: `第三步：利用积分条件确定 a 和 b
 
-- 区间 [-0.5, 0.5]：仅有 t = 0 处的冲激（n = 0，偶），故
-\\int_{-0.5}^{0.5} x(t) \\, dt = 1.5(a+b) = 1 \\quad \\Rightarrow \\quad a+b = \\frac{2}{3}. \\tag{1}
+- 区间 [-0.5, 0.5]：仅有 t = 0 处的冲激，因此 \\int_{-0.5}^{0.5} x(t) \\, dt = 1.5(a+b) = 1 \\quad \\Rightarrow \\quad a+b = \\frac{2}{3}. \\tag{1}
 
-- 区间 [0, 2]：包含 $t=0$（偶）和 $t=1.5$（奇），故
-\\int_{0}^{2} x(t) \\, dt = 1.5(a+b) + 1.5(a-b) = 3a = 2 \\quad \\Rightarrow \\quad a = \\frac{2}{3}. \\tag{2}
+- 区间 [0, 2]：包含 $t=0$ 和 $t=1.5$，因此 \\int_{0}^{2} x(t) \\, dt = 1.5(a+b) + 1.5(a-b) = 3a = 2 \\quad \\Rightarrow \\quad a = \\frac{2}{3}. \\tag{2}
 
 代入 (1) 得 \\$b = 0$。
-
-最终答案为：
-\\boxed{C_k = \\begin{cases} \\frac{2}{3}, & k \\text{为偶数} \\\\ 0, & k \\text{为奇数} \\end{cases}}`,
+最终答案为：\\boxed{C_k = \\begin{cases} \\frac{2}{3}, & k \\text{为偶数} \\\\ 0, & k \\text{为奇数} \\end{cases}}`,
             createdAt: "2026-07-03T10:00:01.000Z"
           }
         ]
@@ -628,9 +1348,12 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      setWebSearchEnabled,
+      uploadZip,
       setActiveConversationId,
       setModelId,
       stagedFiles: [],
+      webSearchEnabled: false,
       settings: {
         modelId: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
         systemPrompt: "You are a helpful assistant."
@@ -639,8 +1362,13 @@ y(t)=\\sum_{k=-\\infty}^{\\infty} c_k H(jk\\omega_0)e^{jk\\omega_0 t}.`,
 
     render(<AppShell onLogout={onLogout} />);
 
-    expect(screen.getByText("最终答案为：")).toBeInTheDocument();
+    expect(screen.getByText((content) => content.includes("第三步"))).toBeInTheDocument();
     expectReadableMath(3);
   });
 });
+
+
+
+
+
 

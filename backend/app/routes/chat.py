@@ -7,17 +7,22 @@ from fastapi.encoders import jsonable_encoder
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.attachments import (
     AttachmentError,
     VisionImageAttachment,
+    build_image_data_url,
     build_attachment_block,
     extract_attachments,
     prepare_attachments,
 )
 from app.auth import require_user_session
+from app.database import get_db
 from app.deepseek import DeepSeekConfigurationError, stream_chat_completion
-from app.models import Session as SessionModel
+from app.models import Conversation, Message, MessageAttachment, Session as SessionModel, now_utc
+from app.search_chat import stream_search_chat
 from app.schemas import ChatRequest, parse_chat_request_json
 from app.zip_context_store import get_zip_model_support, zip_context_store
 
@@ -26,12 +31,25 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 MISSING_ZIP_CONTEXT_ERROR = "ZIP \u4e0a\u4e0b\u6587\u4e0d\u5b58\u5728\u6216\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u4e0a\u4f20\u538b\u7f29\u5305\u3002"
+PENDING_ZIP_CONTEXT_ERROR = "ZIP 压缩包仍在解析中，请稍后再试。"
+STREAM_KEEPALIVE_MARKER = "\u001e__CIPHER_KEEPALIVE__\u001e"
+STREAM_ERROR_PREFIX = "\u001e__CIPHER_ERROR__:"
+STREAM_MARKER_SUFFIX = "\u001e"
+
+
+def build_stream_error_marker(message: str) -> str:
+    return f"{STREAM_ERROR_PREFIX}{message}{STREAM_MARKER_SUFFIX}"
 
 
 def build_chat_stream(
     messages: list[dict[str, Any]],
     model: str,
+    *,
+    web_search: bool = False,
 ):
+    if web_search:
+        return stream_search_chat(messages=messages, model=model, web_search=True)
+
     stream_signature = inspect.signature(stream_chat_completion)
     accepts_model = len(stream_signature.parameters) > 1 or any(
         parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
@@ -137,10 +155,13 @@ def attach_vision_content_to_messages(
             content_blocks.append({"type": "text", "text": text_block})
 
     for image in vision_images:
+        image_url = image.data_url
+        if not image_url and image.raw_bytes is not None:
+            image_url = build_image_data_url(image.raw_bytes, image.media_type)
         content_blocks.append(
             {
                 "type": "image_url",
-                "image_url": {"url": image.data_url},
+                "image_url": {"url": image_url},
             }
         )
 
@@ -154,10 +175,86 @@ def attach_vision_content_to_messages(
     return next_messages
 
 
+def get_owned_conversation(
+    db: Session,
+    conversation_id: int,
+    current_session: SessionModel,
+) -> Conversation | None:
+    return db.execute(
+        select(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.owner_user_id == current_session.user_id,
+        )
+    ).scalar_one_or_none()
+
+
+def persist_conversation_messages(
+    db: Session,
+    *,
+    current_session: SessionModel,
+    conversation_id: str | None,
+    user_message_content: str | None,
+    user_attachments: list[dict[str, Any]] | None,
+    assistant_content: str,
+) -> None:
+    if conversation_id is None or current_session.user_id is None:
+        return
+
+    try:
+        parsed_conversation_id = int(conversation_id)
+    except ValueError:
+        return
+
+    conversation = get_owned_conversation(db, parsed_conversation_id, current_session)
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found",
+        )
+
+    if user_message_content:
+        user_message = Message(
+            conversation_id=conversation.id,
+            role="user",
+            content=user_message_content,
+        )
+        db.add(user_message)
+        db.flush()
+
+        for attachment in user_attachments or []:
+            db.add(
+                MessageAttachment(
+                    message_id=user_message.id,
+                    attachment_id=str(attachment["id"]),
+                    name=str(attachment["name"]),
+                    type=str(attachment["type"]),
+                    size=int(attachment["size"]),
+                    meta=(
+                        str(attachment["meta"])
+                        if attachment.get("meta") is not None
+                        else None
+                    ),
+                )
+            )
+
+    if assistant_content:
+        db.add(
+            Message(
+                conversation_id=conversation.id,
+                role="assistant",
+                content=assistant_content,
+            )
+        )
+
+    conversation.updated_at = now_utc()
+    db.commit()
+
+
 @router.post("")
 async def chat(
     request: Request,
     current_session: SessionModel = Depends(require_user_session),
+    db: Session = Depends(get_db),
 ) -> StreamingResponse:
     files = []
     content_type = request.headers.get("content-type", "")
@@ -217,6 +314,16 @@ async def chat(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=MISSING_ZIP_CONTEXT_ERROR,
             )
+        if stored_zip_context.uploading:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=PENDING_ZIP_CONTEXT_ERROR,
+            )
+        if stored_zip_context.error_message:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=stored_zip_context.error_message,
+            )
         zip_context_block = build_zip_context_block(
             stored_zip_context.archive_name,
             stored_zip_context.attachment_block,
@@ -252,10 +359,8 @@ async def chat(
         stream = build_chat_stream(
             message_history,
             payload.model,
+            web_search=payload.webSearch,
         )
-        first_chunk = await anext(stream)
-    except StopAsyncIteration:
-        first_chunk = ""
     except AttachmentError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -272,13 +377,43 @@ async def chat(
             detail=str(exc) or "DeepSeek request failed",
         ) from exc
 
-    async def stream_response() -> AsyncIterator[str]:
-        if first_chunk:
-            yield first_chunk
+    last_user_message_content = payload.messages[-1].content if payload.messages[-1].role == "user" else None
+    last_user_message_attachments = (
+        [
+            {
+                "id": attachment.id,
+                "name": attachment.name,
+                "type": attachment.type,
+                "size": attachment.size,
+                "meta": attachment.meta,
+            }
+            for attachment in payload.messages[-1].attachments
+        ]
+        if payload.messages and payload.messages[-1].role == "user"
+        else []
+    )
 
-        async for chunk in stream:
-            if chunk:
-                yield chunk
+    async def stream_response() -> AsyncIterator[str]:
+        assistant_content = ""
+        yield STREAM_KEEPALIVE_MARKER
+
+        try:
+            async for chunk in stream:
+                if chunk:
+                    assistant_content += chunk
+                    yield chunk
+        except Exception as exc:
+            yield build_stream_error_marker(str(exc) or "DeepSeek request failed")
+            return
+
+        persist_conversation_messages(
+            db,
+            current_session=current_session,
+            conversation_id=payload.conversationId,
+            user_message_content=last_user_message_content,
+            user_attachments=last_user_message_attachments,
+            assistant_content=assistant_content,
+        )
 
     return StreamingResponse(
         stream_response(),

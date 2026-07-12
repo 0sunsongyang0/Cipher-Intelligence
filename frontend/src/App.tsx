@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthGuard } from "./components/AuthGuard";
 import { AppShell } from "./components/webllm/AppShell";
+import { useFrontendVersionRefresh } from "./hooks/useFrontendVersionRefresh";
 import { checkSession, login, logout, register } from "./lib/api";
 import { LoginPage, type AuthMode } from "./pages/LoginPage";
 import type { AuthUser, SessionStatus } from "./types";
@@ -25,6 +26,8 @@ function getInvalidAuthSessionMessage(mode: AuthMode): string {
 }
 
 export function App() {
+  useFrontendVersionRefresh();
+
   const navigate = useNavigate();
   const [sessionKnown, setSessionKnown] = useState(false);
   const [sessionAuthenticated, setSessionAuthenticated] = useState(false);

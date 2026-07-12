@@ -111,6 +111,7 @@ export function LoginPage({
           <div className="auth-mode-toggle" role="tablist" aria-label="认证模式">
             <button
               type="button"
+              className={`auth-mode-toggle__button${mode === "login" ? " auth-mode-toggle__button--active" : ""}`}
               aria-pressed={mode === "login"}
               onClick={() => onModeChange("login")}
               disabled={isSubmitting}
@@ -119,6 +120,7 @@ export function LoginPage({
             </button>
             <button
               type="button"
+              className={`auth-mode-toggle__button${mode === "register" ? " auth-mode-toggle__button--active" : ""}`}
               aria-pressed={mode === "register"}
               onClick={() => onModeChange("register")}
               disabled={isSubmitting}

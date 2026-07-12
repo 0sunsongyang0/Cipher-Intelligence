@@ -13,6 +13,7 @@ from app.attachments import (
     extract_docx_text,
     extract_image_text,
     extract_pdf_text,
+    extract_pptx_text,
 )
 
 
@@ -176,6 +177,68 @@ def test_extract_docx_text_reports_missing_dependency(monkeypatch) -> None:
         extract_docx_text(b"bad-docx")
 
 
+def test_extract_pptx_text_wraps_parser_errors(monkeypatch) -> None:
+    def broken_presentation(_stream):
+        raise ValueError("pptx parser exploded")
+
+    monkeypatch.setitem(sys.modules, "pptx", types.SimpleNamespace(Presentation=broken_presentation))
+
+    with pytest.raises(
+        AttachmentError,
+        match=r"^Unable to extract text from PPTX attachment\.$",
+    ):
+        extract_pptx_text(b"bad-pptx")
+
+
+def test_extract_pptx_text_reports_missing_dependency(monkeypatch) -> None:
+    original_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "pptx":
+            raise ImportError("No module named 'pptx'")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    with pytest.raises(
+        AttachmentError,
+        match=r"^PPTX attachment support is unavailable on this server\. Missing dependency: python-pptx\.$",
+    ):
+        extract_pptx_text(b"bad-pptx")
+
+
+def test_extract_pptx_text_skips_non_table_shapes_without_crashing(monkeypatch) -> None:
+    class FakeShape:
+        has_table = False
+        text = "chart title"
+
+        @property
+        def table(self):
+            raise ValueError("shape does not contain a table")
+
+    class FakeSlide:
+        shapes = [FakeShape()]
+        has_notes_slide = False
+
+    class FakePresentation:
+        def __init__(self, _stream):
+            self.slides = [FakeSlide()]
+
+    monkeypatch.setitem(sys.modules, "pptx", types.SimpleNamespace(Presentation=FakePresentation))
+
+    assert extract_pptx_text(b"fake-pptx") == "[Slide 1]\nchart title"
+
+
+@pytest.mark.anyio
+async def test_extract_attachments_supports_ppt_with_binary_text_fallback() -> None:
+    extracted = await extract_attachments(
+        [make_upload_file("slides.ppt", b"Title Slide\x00\x00Agenda item one\x00\x00")]
+    )
+
+    assert extracted[0].category == "ppt"
+    assert "Title Slide" in extracted[0].text
+
+
 def test_extract_image_text_wraps_parser_errors(monkeypatch) -> None:
     def broken_open(_stream):
         raise ValueError("image parser exploded")
@@ -213,3 +276,33 @@ def test_extract_image_text_reports_missing_ocr_dependency(monkeypatch) -> None:
         match=r"^Image attachment support is unavailable on this server\. Missing dependency: rapidocr-onnxruntime\.$",
     ):
         extract_image_text(b"bad-image")
+
+
+def test_extract_image_text_reuses_ocr_engine_across_calls(monkeypatch) -> None:
+    created_engines: list[object] = []
+
+    class FakeImage:
+        def convert(self, _mode: str):
+            return self
+
+    def fake_open(_stream):
+        return FakeImage()
+
+    class FakeRapidOCR:
+        def __init__(self):
+            created_engines.append(object())
+
+        def __call__(self, _image):
+            return ([("box", "cached text", 0.99)], None)
+
+    pil_image_module = types.SimpleNamespace(open=fake_open)
+    pil_module = types.SimpleNamespace(Image=pil_image_module)
+    rapidocr_module = types.SimpleNamespace(RapidOCR=FakeRapidOCR)
+
+    monkeypatch.setitem(sys.modules, "PIL", pil_module)
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", rapidocr_module)
+    monkeypatch.setattr("app.attachments._ocr_engine", None)
+
+    assert extract_image_text(b"image-one") == "cached text"
+    assert extract_image_text(b"image-two") == "cached text"
+    assert len(created_engines) == 1

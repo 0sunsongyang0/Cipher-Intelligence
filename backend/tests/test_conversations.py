@@ -84,3 +84,80 @@ def test_conversation_item_routes_only_expose_owned_user_data(
     with SessionLocal() as db:
         assert db.get(Conversation, conversation.id) is None
         assert db.query(Message).filter(Message.conversation_id == conversation.id).count() == 0
+
+
+def test_import_conversation_persists_legacy_local_history(client, create_user) -> None:
+    create_user(username="alice", password="StrongPass123!")
+    login(client, username="alice", password="StrongPass123!")
+
+    response = client.post(
+        "/api/conversations/import",
+        json={
+            "title": "Legacy local thread",
+            "messages": [
+                {"role": "user", "content": "Old local hello"},
+                {"role": "assistant", "content": "Old local hi"},
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["title"] == "Legacy local thread"
+    assert payload["importedMessages"] == 2
+
+    with SessionLocal() as db:
+        stored = db.get(Conversation, payload["id"])
+        assert stored is not None
+        assert stored.owner_user_id is not None
+        assert [message.role for message in stored.messages] == ["user", "assistant"]
+        assert [message.content for message in stored.messages] == [
+            "Old local hello",
+            "Old local hi",
+        ]
+
+
+def test_conversation_message_history_includes_persisted_attachment_references(
+    client, create_user
+) -> None:
+    create_user(username="alice", password="StrongPass123!")
+    login(client, username="alice", password="StrongPass123!")
+
+    import_response = client.post(
+        "/api/conversations/import",
+        json={
+            "title": "Attachment thread",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "请看这个文件",
+                    "attachments": [
+                        {
+                            "id": "attachment-1",
+                            "name": "notes.txt",
+                            "type": "TXT",
+                            "size": 5,
+                            "meta": "引用文件",
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "好的"},
+            ],
+        },
+    )
+
+    assert import_response.status_code == 201
+    conversation_id = import_response.json()["id"]
+
+    messages_response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    assert messages_response.status_code == 200
+    assert messages_response.json()["items"][0]["attachments"] == [
+        {
+            "id": "attachment-1",
+            "name": "notes.txt",
+            "type": "TXT",
+            "size": 5,
+            "meta": "引用文件",
+        }
+    ]

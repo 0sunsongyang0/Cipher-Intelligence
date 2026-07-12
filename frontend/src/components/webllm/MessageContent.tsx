@@ -1,5 +1,6 @@
 import { Children, isValidElement, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Options as RemarkMathOptions } from "remark-math";
 import remarkMath from "remark-math";
 
@@ -131,6 +132,22 @@ function ensureMathJax() {
   return mathJaxWindow.__bombMathJaxReady;
 }
 
+function nodeContainsMathError(node: HTMLElement) {
+  if (
+    node.matches(
+      "[data-mml-node='merror'], mjx-merror, [data-mjx-error], [data-mml-node='mtext'][fill='red'][stroke='red']"
+    )
+  ) {
+    return true;
+  }
+
+  return Boolean(
+    node.querySelector(
+      "[data-mml-node='merror'], mjx-merror, [data-mjx-error], [data-mml-node='mtext'][fill='red'][stroke='red']"
+    )
+  );
+}
+
 function MathFormula({ display, tex }: { display: boolean; tex: string }) {
   const containerRef = useRef<HTMLSpanElement>(null);
   const [failed, setFailed] = useState(false);
@@ -167,6 +184,11 @@ function MathFormula({ display, tex }: { display: boolean; tex: string }) {
         }
 
         if (!node) {
+          setFailed(true);
+          return;
+        }
+
+        if (nodeContainsMathError(node)) {
           setFailed(true);
           return;
         }
@@ -593,7 +615,7 @@ export function MessageContent({ content }: MessageContentProps) {
   return (
     <div className="bomb-shell__markdown">
       <ReactMarkdown
-        remarkPlugins={[[remarkMath, remarkMathOptions]]}
+        remarkPlugins={[remarkGfm, [remarkMath, remarkMathOptions]]}
         components={{
           code: ({ children, className }) => {
             const isMath = className?.split(" ").some((name) => name === "language-math" || name === "math-inline");
@@ -605,6 +627,15 @@ export function MessageContent({ content }: MessageContentProps) {
             return <code className={className}>{children}</code>;
           },
           p: ({ children }) => <p>{children}</p>,
+          table: ({ children }) => (
+            <div className="bomb-shell__table-wrap">
+              <table className="bomb-shell__table">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead>{children}</thead>,
+          tbody: ({ children }) => <tbody>{children}</tbody>,
+          th: ({ children }) => <th>{children}</th>,
+          td: ({ children }) => <td>{children}</td>,
           pre: ({ children }) => {
             const onlyChild = Children.toArray(children)[0];
 

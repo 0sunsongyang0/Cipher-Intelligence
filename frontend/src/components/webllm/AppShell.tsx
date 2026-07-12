@@ -1,7 +1,15 @@
-﻿import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from "react";
+﻿import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+  type KeyboardEvent,
+  type TouchEvent
+} from "react";
 import {
   IconArrowUp,
-  IconBomb,
   IconCheck,
   IconChevronDown,
   IconExternalLink,
@@ -12,22 +20,28 @@ import {
   IconPlayerStopFilled,
   IconSettings,
   IconUserCircle,
+  IconWorld,
   IconX
 } from "@tabler/icons-react";
 
 import {
+  buildZipAttachmentMeta as formatZipAttachmentMeta,
   MODEL_PROVIDER_LABELS,
   MODEL_PROVIDER_ORDER,
   getDeepSeekModelLabel,
   getDeepSeekModelProvider,
   getDeepSeekModelsByProvider,
+  isZipContextSupportedModel,
   resolveDeepSeekModelId,
+  ZIP_UNSUPPORTED_MODEL_REASON,
   type DeepSeekModelId,
   type ModelProvider,
   type RuntimeStatus
 } from "../../types";
+import cipherLogo from "../../assets/cipher-logo-tight.png";
 import { useServerChat } from "../../hooks/useServerChat";
 import { AuroraBackground } from "../AuroraBackground";
+import { AttachmentTypeIcon } from "./AttachmentTypeIcon";
 import { MessageContent } from "./MessageContent";
 import { SettingsDrawer } from "./SettingsDrawer";
 
@@ -46,10 +60,21 @@ const FOCUSABLE_SELECTOR = [
 ].join(", ");
 
 const MODEL_MENU_CLOSE_MS = 220;
+const ERROR_BANNER_CLOSE_MS = 3600;
 const MODEL_SUBMENU_ID = "webllm-model-submenu";
+const MOBILE_EDGE_SWIPE_START_PX = 28;
+const MOBILE_SWIPE_TRIGGER_PX = 64;
+const MOBILE_SWIPE_VERTICAL_TOLERANCE_PX = 72;
 
 type ModelButtonRefMap = Partial<Record<DeepSeekModelId, HTMLButtonElement | null>>;
 type ProviderButtonRefMap = Partial<Record<ModelProvider, HTMLButtonElement | null>>;
+type TouchSwipeState = {
+  mode: "idle" | "open-drawer" | "close-drawer";
+  startX: number;
+  startY: number;
+  deltaX: number;
+  deltaY: number;
+};
 
 function getFocusableElements(container: HTMLElement | null): HTMLElement[] {
   if (!container) {
@@ -97,6 +122,40 @@ function isMobileViewport(): boolean {
   return window.innerWidth <= 760;
 }
 
+function isTabletLandscapeViewport(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  if (typeof window.matchMedia === "function") {
+    return window.matchMedia("(min-width: 761px) and (max-width: 1180px) and (orientation: landscape)").matches;
+  }
+
+  return window.innerWidth >= 761 && window.innerWidth <= 1180 && window.innerWidth > window.innerHeight;
+}
+
+function getTouchPoint(event: TouchEvent<HTMLElement>) {
+  return event.touches[0] ?? event.changedTouches[0] ?? null;
+}
+
+function isTouchInteractiveTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return Boolean(target.closest("button, a, input, textarea, select, label, summary, [role='button']"));
+}
+
+function buildIdleTouchSwipeState(): TouchSwipeState {
+  return {
+    mode: "idle",
+    startX: 0,
+    startY: 0,
+    deltaX: 0,
+    deltaY: 0
+  };
+}
+
 function formatTimestamp(value: string): string {
   return new Intl.DateTimeFormat("en", {
     month: "short",
@@ -116,6 +175,10 @@ function formatAttachmentSize(size: number): string {
   }
 
   return `${Math.round(size / 104857.6) / 10} MB`;
+}
+
+function formatAttachmentMeta(type: string, size: number): string {
+  return `${type} · ${formatAttachmentSize(size)}`;
 }
 
 function isNearBottom(element: HTMLElement, threshold = 120): boolean {
@@ -195,6 +258,12 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
   const [modelMenuVisible, setModelMenuVisible] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const [isComposerFocused, setComposerFocused] = useState(false);
+  const [mobileKeyboardOffset, setMobileKeyboardOffset] = useState(0);
+  const [isTabletLandscape, setTabletLandscape] = useState(() => isTabletLandscapeViewport());
+  const [composerError, setComposerError] = useState<string | null>(null);
+  const [dismissedErrorMessage, setDismissedErrorMessage] = useState<string | null>(null);
+  const [searchBannerMessage, setSearchBannerMessage] = useState<string | null>(null);
   const [contextMenuState, setContextMenuState] = useState<{
     conversationId: string;
     x: number;
@@ -220,6 +289,7 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
   const drawerOpenFrameRef = useRef<number | null>(null);
   const modelMenuOpenFrameRef = useRef<number | null>(null);
   const previousMessageCountRef = useRef(0);
+  const touchSwipeRef = useRef<TouchSwipeState>(buildIdleTouchSwipeState());
 
   const {
     activeConversation,
@@ -230,12 +300,16 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
     deleteConversation,
     error,
     isGenerating,
+    removePendingZipContext,
     removeFile,
     runtimeStatus,
     sendMessage,
+    setWebSearchEnabled,
+    uploadZip,
     setActiveConversationId,
     setModelId,
     stagedFiles,
+    webSearchEnabled,
     settings
   } = useServerChat();
   const [activeModelProvider, setActiveModelProvider] = useState<ModelProvider>(() =>
@@ -253,7 +327,66 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
   const activeProviderModels = getDeepSeekModelsByProvider(activeProvider);
 
   const messages = activeConversation?.messages ?? [];
-  const activeError = sessionError ?? error;
+  const activeZipContext = activeConversation?.zipContext;
+  const pendingZipAttachmentMeta = activeZipContext ? formatZipAttachmentMeta(activeZipContext) : null;
+  const retainedPendingZipAttachment =
+    activeZipContext?.pendingAttachment && activeZipContext.archiveName
+      ? stagedFiles.find(
+          (attachment) =>
+            attachment.retainedForZipContext &&
+            attachment.type === "ZIP" &&
+            attachment.name === activeZipContext.archiveName
+        )
+      : undefined;
+  const visibleStagedFiles = retainedPendingZipAttachment
+    ? stagedFiles.filter((attachment) => attachment.id !== retainedPendingZipAttachment.id)
+    : stagedFiles;
+  const activeZipSupportedBySelectedModel = !activeZipContext || isZipContextSupportedModel(modelId);
+  const activeZipUnsupportedReason =
+    activeZipContext && !activeZipSupportedBySelectedModel
+      ? activeZipContext.unsupportedReason ?? ZIP_UNSUPPORTED_MODEL_REASON
+      : null;
+  const activeError = sessionError ?? composerError ?? error;
+  const visibleError = activeError && activeError !== dismissedErrorMessage ? activeError : null;
+
+  useEffect(() => {
+    if (searchBannerMessage === null) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setSearchBannerMessage(null);
+    }, 1800);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [searchBannerMessage]);
+
+  useEffect(() => {
+    if (activeError === null) {
+      setDismissedErrorMessage(null);
+      return;
+    }
+
+    if (activeError === dismissedErrorMessage) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setDismissedErrorMessage(activeError);
+    }, ERROR_BANNER_CLOSE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [activeError, dismissedErrorMessage]);
+
+  useEffect(() => {
+    if (activeZipUnsupportedReason === null) {
+      setComposerError(null);
+    }
+  }, [activeZipUnsupportedReason]);
 
   useEffect(() => {
     if (messages.length === 0) {
@@ -328,8 +461,22 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
 
   useEffect(() => {
     function handleViewportChange() {
-      if (!isMobileViewport()) {
+      const mobile = isMobileViewport();
+      const tabletLandscape = isTabletLandscapeViewport();
+
+      setTabletLandscape(tabletLandscape);
+
+      if (!mobile) {
         setDrawerOpen(false);
+      }
+
+      if (tabletLandscape) {
+        setSidebarOpen(true);
+        return;
+      }
+
+      if (mobile) {
+        setSidebarOpen(false);
       }
     }
 
@@ -340,6 +487,32 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
       window.removeEventListener("resize", handleViewportChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isComposerFocused || !isMobileViewport() || typeof window === "undefined") {
+      setMobileKeyboardOffset(0);
+      return;
+    }
+
+    const visualViewport = window.visualViewport;
+    if (!visualViewport) {
+      return;
+    }
+
+    const updateKeyboardOffset = () => {
+      const nextOffset = Math.max(0, window.innerHeight - visualViewport.height - visualViewport.offsetTop);
+      setMobileKeyboardOffset(nextOffset > 12 ? nextOffset : 0);
+    };
+
+    updateKeyboardOffset();
+    visualViewport.addEventListener("resize", updateKeyboardOffset);
+    visualViewport.addEventListener("scroll", updateKeyboardOffset);
+
+    return () => {
+      visualViewport.removeEventListener("resize", updateKeyboardOffset);
+      visualViewport.removeEventListener("scroll", updateKeyboardOffset);
+    };
+  }, [isComposerFocused]);
 
   useEffect(() => {
     if (contextMenuState === null) {
@@ -462,7 +635,13 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
       return;
     }
 
+    if (activeZipUnsupportedReason) {
+      setComposerError(activeZipUnsupportedReason);
+      return;
+    }
+
     const nextDraft = draft;
+    setComposerError(null);
     setDraft("");
     await sendMessage(nextDraft);
   }
@@ -476,21 +655,59 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
   function handleSelectConversation(conversationId: string) {
     setDrawerOpen(false);
     setContextMenuState(null);
+    setComposerError(null);
     clearFiles();
     setActiveConversationId(conversationId);
   }
 
-  function handleFileSelection(event: ChangeEvent<HTMLInputElement>) {
-    const files = event.target.files ? Array.from(event.target.files) : [];
-
-    if (files.length > 0) {
-      addFiles(files);
+  async function routeIncomingFiles(files: File[]) {
+    if (files.length === 0) {
+      return;
     }
 
+    const zipFiles: File[] = [];
+    const standardFiles: File[] = [];
+
+    for (const file of files) {
+      if (file.name.toLowerCase().endsWith(".zip")) {
+        zipFiles.push(file);
+      } else {
+        standardFiles.push(file);
+      }
+    }
+
+    if (standardFiles.length > 0) {
+      addFiles(standardFiles);
+    }
+
+    if (zipFiles.length === 0) {
+      return;
+    }
+
+    setComposerError(null);
+
+    try {
+      for (const zipFile of zipFiles) {
+        await uploadZip(zipFile, draft.trim());
+      }
+    } catch (nextError) {
+      setComposerError(nextError instanceof Error ? nextError.message : "ZIP 上传失败，请稍后重试。");
+    }
+  }
+
+  function handleFileSelection(event: ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    void routeIncomingFiles(files);
     event.target.value = "";
   }
 
   function handleConversationDrawerOpen() {
+    if (isTabletLandscapeViewport()) {
+      setDrawerOpen(false);
+      setSidebarOpen((previousState) => !previousState);
+      return;
+    }
+
     if (drawerOpen) {
       return;
     }
@@ -524,6 +741,117 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
     }
 
     setSidebarOpen(true);
+  }
+
+  function resetTouchSwipe() {
+    touchSwipeRef.current = buildIdleTouchSwipeState();
+  }
+
+  function handleMainTouchStart(event: TouchEvent<HTMLElement>) {
+    if (!isMobileViewport() || drawerOpen || settingsOpen || modelMenuOpen) {
+      resetTouchSwipe();
+      return;
+    }
+
+    if (isTouchInteractiveTarget(event.target)) {
+      resetTouchSwipe();
+      return;
+    }
+
+    const point = getTouchPoint(event);
+    if (!point || point.clientX > MOBILE_EDGE_SWIPE_START_PX) {
+      resetTouchSwipe();
+      return;
+    }
+
+    touchSwipeRef.current = {
+      mode: "open-drawer",
+      startX: point.clientX,
+      startY: point.clientY,
+      deltaX: 0,
+      deltaY: 0
+    };
+  }
+
+  function handleMainTouchMove(event: TouchEvent<HTMLElement>) {
+    if (touchSwipeRef.current.mode !== "open-drawer") {
+      return;
+    }
+
+    const point = getTouchPoint(event);
+    if (!point) {
+      return;
+    }
+
+    touchSwipeRef.current = {
+      ...touchSwipeRef.current,
+      deltaX: point.clientX - touchSwipeRef.current.startX,
+      deltaY: point.clientY - touchSwipeRef.current.startY
+    };
+  }
+
+  function handleMainTouchEnd() {
+    const swipe = touchSwipeRef.current;
+    if (
+      swipe.mode === "open-drawer" &&
+      swipe.deltaX >= MOBILE_SWIPE_TRIGGER_PX &&
+      Math.abs(swipe.deltaY) <= MOBILE_SWIPE_VERTICAL_TOLERANCE_PX
+    ) {
+      handleConversationDrawerOpen();
+    }
+
+    resetTouchSwipe();
+  }
+
+  function handleDrawerTouchStart(event: TouchEvent<HTMLElement>) {
+    if (!drawerOpen || !isMobileViewport()) {
+      resetTouchSwipe();
+      return;
+    }
+
+    const point = getTouchPoint(event);
+    if (!point || isTouchInteractiveTarget(event.target)) {
+      resetTouchSwipe();
+      return;
+    }
+
+    touchSwipeRef.current = {
+      mode: "close-drawer",
+      startX: point.clientX,
+      startY: point.clientY,
+      deltaX: 0,
+      deltaY: 0
+    };
+  }
+
+  function handleDrawerTouchMove(event: TouchEvent<HTMLElement>) {
+    if (touchSwipeRef.current.mode !== "close-drawer") {
+      return;
+    }
+
+    const point = getTouchPoint(event);
+    if (!point) {
+      return;
+    }
+
+    touchSwipeRef.current = {
+      ...touchSwipeRef.current,
+      deltaX: point.clientX - touchSwipeRef.current.startX,
+      deltaY: point.clientY - touchSwipeRef.current.startY
+    };
+  }
+
+  function handleDrawerTouchEnd() {
+    const swipe = touchSwipeRef.current;
+    if (
+      swipe.mode === "close-drawer" &&
+      swipe.deltaX <= -MOBILE_SWIPE_TRIGGER_PX &&
+      Math.abs(swipe.deltaY) <= MOBILE_SWIPE_VERTICAL_TOLERANCE_PX
+    ) {
+      setDrawerOpen(false);
+    }
+
+    resetTouchSwipe();
   }
 
   function isFileDrag(event: DragEvent<HTMLElement>): boolean {
@@ -574,7 +902,7 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
     const files = Array.from(event.dataTransfer.files ?? []);
 
     if (files.length > 0) {
-      addFiles(files);
+      void routeIncomingFiles(files);
     }
   }
 
@@ -665,14 +993,20 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
     setModelMenuOpen(false);
   }
 
+  function handleWebSearchToggle() {
+    const nextEnabled = !webSearchEnabled;
+    setWebSearchEnabled(nextEnabled);
+    setSearchBannerMessage(nextEnabled ? "已启用联网搜索" : "已关闭联网搜索");
+  }
+
   function renderSidebarContent() {
     return (
       <div className="bomb-shell__sidebar-content">
         <div className="bomb-shell__sidebar-top">
           <div className="bomb-shell__logo-row">
             <span className="bomb-shell__logo">
-              <IconBomb size={18} stroke={1.8} />
-              <span>Bomb AI</span>
+              <img className="bomb-shell__logo-mark" src={cipherLogo} alt="" aria-hidden="true" />
+              <span>Cipher AI</span>
             </span>
             <button
               type="button"
@@ -767,11 +1101,42 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
         className={`bomb-shell__dock-wrap${layout === "centered" ? " bomb-shell__dock-wrap--centered" : ""}`}
         data-testid="chat-input-dock"
       >
-        {stagedFiles.length > 0 ? (
+        {activeZipContext?.pendingAttachment || visibleStagedFiles.length > 0 ? (
           <div className="bomb-shell__attachments" aria-live="polite">
             <ul className="bomb-shell__attachment-list" aria-label="待发送附件">
-              {stagedFiles.map((attachment) => (
+              {activeZipContext?.pendingAttachment ? (
+                <li className="bomb-shell__attachment-chip">
+                  <AttachmentTypeIcon
+                    className="bomb-shell__attachment-icon"
+                    name={activeZipContext.archiveName}
+                    type="ZIP"
+                  />
+                  <span className="bomb-shell__attachment-copy">
+                    <span className="bomb-shell__attachment-name">{activeZipContext.archiveName}</span>
+                    <span className="bomb-shell__attachment-meta">{pendingZipAttachmentMeta}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="bomb-shell__attachment-remove"
+                    aria-label={`移除附件 ${activeZipContext.archiveName}`}
+                    onClick={() => {
+                      removePendingZipContext?.();
+                      if (retainedPendingZipAttachment) {
+                        removeFile(retainedPendingZipAttachment.id);
+                      }
+                    }}
+                  >
+                    <IconX size={14} stroke={2} aria-hidden="true" />
+                  </button>
+                </li>
+              ) : null}
+              {visibleStagedFiles.map((attachment) => (
                 <li key={attachment.id} className="bomb-shell__attachment-chip">
+                  <AttachmentTypeIcon
+                    className="bomb-shell__attachment-icon"
+                    name={attachment.name}
+                    type={attachment.type}
+                  />
                   <span className="bomb-shell__attachment-copy">
                     <span className="bomb-shell__attachment-name">{attachment.name}</span>
                     <span className="bomb-shell__attachment-meta">
@@ -821,20 +1186,36 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
             <IconPaperclip size={18} stroke={1.8} />
           </button>
 
+          <button
+            className={`bomb-shell__dock-tool${webSearchEnabled ? " bomb-shell__dock-tool--search bomb-shell__dock-tool--active" : ""}`}
+            type="button"
+            aria-label={webSearchEnabled ? "关闭联网搜索" : "启用联网搜索"}
+            aria-pressed={webSearchEnabled}
+            onClick={handleWebSearchToggle}
+            disabled={isGenerating}
+          >
+            <IconWorld size={18} stroke={1.8} />
+          </button>
+
           <textarea
             ref={textareaRef}
             id="prompt-composer-message"
             name="message"
             className="bomb-shell__dock-input"
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              if (composerError) {
+                setComposerError(null);
+              }
+              setDraft(event.target.value);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 void handleSend();
               }
             }}
-            placeholder="向 Bomb AI 输入你的问题..."
+            placeholder="向 Cipher AI 输入你的问题..."
             rows={1}
             disabled={isGenerating}
           />
@@ -853,7 +1234,7 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
           <span className={`bomb-shell__runtime-pill bomb-shell__runtime-pill--${shellStatus.tone}`}>
             {shellStatus.label}
           </span>
-          <span>Bomb AI 是一款 AI 工具，其回答未必正确无误。</span>
+          <span>Cipher AI 是一款 AI 工具，其回答未必正确无误。</span>
         </div>
       </div>
     );
@@ -884,6 +1265,10 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
           onDragOver={handleMainDragOver}
           onDragLeave={handleMainDragLeave}
           onDrop={handleMainDrop}
+          onTouchStart={handleMainTouchStart}
+          onTouchMove={handleMainTouchMove}
+          onTouchEnd={handleMainTouchEnd}
+          onTouchCancel={handleMainTouchEnd}
         >
           <header className="bomb-shell__header" role="banner">
             <button
@@ -1000,9 +1385,15 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
             </div>
           </header>
 
-          {activeError ? (
+          {visibleError ? (
             <p className="status-banner status-banner--error bomb-shell__top-alert" role="alert">
-              {activeError}
+              {visibleError}
+            </p>
+          ) : null}
+
+          {!visibleError && searchBannerMessage ? (
+            <p className="status-banner status-banner--success bomb-shell__top-alert bomb-shell__top-toast" role="status">
+              {searchBannerMessage}
             </p>
           ) : null}
 
@@ -1031,11 +1422,12 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
                     <div
                       key={message.id}
                       className={`bomb-shell__message-row${isUser ? " bomb-shell__message-row--user" : ""}`}
+                      data-testid={`message-row-${message.id}`}
                       ref={index === messages.length - 1 ? lastMessageRef : null}
                     >
                       {!isUser ? (
                         <div className="bomb-shell__avatar bomb-shell__avatar--assistant">
-                          <IconBomb size={18} stroke={1.8} />
+                          <img className="bomb-shell__avatar-mark" src={cipherLogo} alt="" aria-hidden="true" />
                         </div>
                       ) : null}
 
@@ -1045,6 +1437,27 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
                         }`}
                       >
                         <div className="bomb-shell__bubble-copy">
+                          {isUser && message.attachments && message.attachments.length > 0 ? (
+                            <div className="bomb-shell__history-attachments">
+                              <ul className="bomb-shell__history-attachment-list" aria-label="消息附件">
+                                {message.attachments.map((attachment) => (
+                                  <li key={attachment.id} className="bomb-shell__history-attachment-card">
+                                    <AttachmentTypeIcon
+                                      className="bomb-shell__attachment-icon bomb-shell__attachment-icon--history"
+                                      name={attachment.name}
+                                      type={attachment.type}
+                                    />
+                                    <span className="bomb-shell__history-attachment-copy">
+                                      <span className="bomb-shell__history-attachment-name">{attachment.name}</span>
+                                      <span className="bomb-shell__history-attachment-meta">
+                                        {attachment.meta ?? formatAttachmentMeta(attachment.type, attachment.size)}
+                                      </span>
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
                           <MessageContent content={message.content} />
                           {isStreamingAssistant ? <span className="bomb-shell__caret" aria-hidden="true" /> : null}
                         </div>
@@ -1131,7 +1544,15 @@ export function AppShell({ onLogout, sessionError = null }: AppShellProps) {
             aria-hidden="true"
             onClick={() => setDrawerOpen(false)}
           />
-          <div className="conversation-drawer__panel bomb-shell__drawer-panel" ref={drawerPanelRef} tabIndex={-1}>
+          <div
+            className="conversation-drawer__panel bomb-shell__drawer-panel"
+            ref={drawerPanelRef}
+            tabIndex={-1}
+            onTouchStart={handleDrawerTouchStart}
+            onTouchMove={handleDrawerTouchMove}
+            onTouchEnd={handleDrawerTouchEnd}
+            onTouchCancel={handleDrawerTouchEnd}
+          >
             <aside className="bomb-shell__drawer-sidebar" aria-label="会话列表">
               {renderSidebarContent()}
             </aside>

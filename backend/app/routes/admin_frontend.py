@@ -1,12 +1,8 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
 from starlette.routing import Match
-
-from app.auth import require_admin_user_session
-from app.database import get_db
 
 router = APIRouter(tags=["admin-frontend"], include_in_schema=False)
 
@@ -51,8 +47,7 @@ def preserve_api_status_for_request(request: Request) -> None:
 
 
 @router.get("/", response_model=None)
-def serve_root(request: Request, db: Session = Depends(get_db)) -> Response:
-    require_admin_user_session(request, db)
+def serve_root() -> Response:
     return serve_admin_shell()
 
 
@@ -71,11 +66,6 @@ def preserve_api_paths(api_path: str, request: Request) -> None:
 
 
 @router.get("/{frontend_path:path}", response_model=None)
-def serve_frontend_path(
-    frontend_path: str,
-    request: Request,
-    db: Session = Depends(get_db),
-) -> Response:
+def serve_frontend_path(frontend_path: str) -> Response:
     del frontend_path
-    require_admin_user_session(request, db)
     return serve_admin_shell()

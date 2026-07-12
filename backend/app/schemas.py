@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 
 ChatModelId = Literal[
@@ -81,6 +81,17 @@ class ConversationCreate(BaseModel):
     title: str
 
 
+class ConversationImportMessage(BaseModel):
+    role: str
+    content: str
+    attachments: list["MessageAttachmentItem"] = []
+
+
+class ConversationImportRequest(BaseModel):
+    title: str
+    messages: list[ConversationImportMessage]
+
+
 class ConversationItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -94,9 +105,24 @@ class ConversationList(BaseModel):
     items: list[ConversationItem]
 
 
+class ConversationImportResult(ConversationItem):
+    importedMessages: int
+
+
 class ChatMessageInput(BaseModel):
     role: str
     content: str
+    attachments: list["MessageAttachmentItem"] = []
+
+
+class MessageAttachmentItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(validation_alias=AliasChoices("attachment_id", "id"))
+    name: str
+    type: str
+    size: int
+    meta: str | None = None
 
 
 class ChatRequest(BaseModel):
@@ -116,6 +142,8 @@ class UploadZipResponse(BaseModel):
     skippedEntryCount: int
     supportedByCurrentModel: bool
     unsupportedReason: str | None = None
+    uploading: bool = False
+    errorMessage: str | None = None
 
 
 class UploadZipRequest(BaseModel):
@@ -139,6 +167,7 @@ class MessageItem(BaseModel):
     role: str
     content: str
     created_at: datetime
+    attachments: list[MessageAttachmentItem] = []
 
 
 class MessageList(BaseModel):

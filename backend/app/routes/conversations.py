@@ -1,11 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.auth import require_user_session
 from app.database import get_db
-from app.models import Conversation, Message, Session as SessionModel
-from app.schemas import ConversationCreate, ConversationItem, ConversationList, MessageList
+from app.models import Conversation, Message, MessageAttachment, Session as SessionModel
+from app.schemas import (
+    ConversationCreate,
+    ConversationImportRequest,
+    ConversationImportResult,
+    ConversationItem,
+    ConversationList,
+    MessageList,
+)
 
 
 router = APIRouter(
@@ -55,6 +62,53 @@ def create_conversation(
     return db_conversation
 
 
+@router.post("/import", response_model=ConversationImportResult, status_code=status.HTTP_201_CREATED)
+def import_conversation(
+    payload: ConversationImportRequest,
+    current_session: SessionModel = Depends(require_user_session),
+    db: Session = Depends(get_db),
+) -> ConversationImportResult:
+    db_conversation = Conversation(
+        title=payload.title,
+        owner_session_id=current_session.id,
+        owner_user_id=current_session.user_id,
+    )
+    db.add(db_conversation)
+    db.flush()
+
+    for message in payload.messages:
+        db_message = Message(
+            conversation_id=db_conversation.id,
+            role=message.role,
+            content=message.content,
+        )
+        db.add(db_message)
+        db.flush()
+
+        for attachment in message.attachments:
+            db.add(
+                MessageAttachment(
+                    message_id=db_message.id,
+                    attachment_id=attachment.id,
+                    name=attachment.name,
+                    type=attachment.type,
+                    size=attachment.size,
+                    meta=attachment.meta,
+                )
+            )
+
+    db.commit()
+    db.refresh(db_conversation)
+
+    return ConversationImportResult(
+        id=db_conversation.id,
+        title=db_conversation.title,
+        created_at=db_conversation.created_at,
+        updated_at=db_conversation.updated_at,
+        importedMessages=len(payload.messages),
+    )
+
+
 @router.get("/{conversation_id}/messages", response_model=MessageList)
 def list_messages(
     conversation_id: int,
@@ -68,6 +122,7 @@ def list_messages(
     messages = db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
+        .options(selectinload(Message.attachments))
         .order_by(Message.created_at.asc(), Message.id.asc())
     ).scalars().all()
     return MessageList(items=messages)

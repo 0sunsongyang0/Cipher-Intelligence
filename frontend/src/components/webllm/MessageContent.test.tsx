@@ -22,6 +22,24 @@ function expectReadableMath(minCount = 1) {
 }
 
 describe("MessageContent", () => {
+  it("renders markdown tables as semantic table elements", () => {
+    render(
+      <MessageContent
+        content={[
+          "| 项目 | 值 |",
+          "| --- | --- |",
+          "| 文件名 | sample.exe |",
+          "| 文件类型 | PE32 |"
+        ].join("\n")}
+      />
+    );
+
+    const table = document.querySelector("table");
+    expect(table).not.toBeNull();
+    expect(screen.getByRole("columnheader", { name: "项目" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "sample.exe" })).toBeInTheDocument();
+  });
+
   it("renders standard MathJax delimiters as readable math", () => {
     render(
       <MessageContent
@@ -73,6 +91,37 @@ x(t) = \sum_{k=-\infty}^{\infty} C_k e^{j k \omega_0 t}, \quad \omega_0 = \frac{
         (element) => !element.children.length && !element.textContent?.trim()
       )
     ).toHaveLength(0);
+  });
+
+  it("falls back to plain text when MathJax returns a red inline error rendering", async () => {
+    vi.stubEnv("MODE", "production");
+    import.meta.env.MODE = "production";
+
+    (window as Window & { MathJax?: object }).MathJax = {
+      startup: { promise: Promise.resolve(), typeset: false },
+      tex2svgPromise: async (tex: string) => {
+        const container = document.createElement("mjx-container");
+        container.setAttribute("jax", "SVG");
+        const errorNode = document.createElement("g");
+        errorNode.setAttribute("data-mml-node", "mtext");
+        errorNode.setAttribute("fill", "red");
+        errorNode.setAttribute("stroke", "red");
+        errorNode.textContent = tex;
+        container.appendChild(errorNode);
+        return container;
+      }
+    };
+
+    render(
+      <MessageContent content={String.raw`pcap 显示的是内网 NetBIOS 广播 $\MAILSLOT\ BROWSE$，说明：`} />
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(String.raw`\MAILSLOT\ BROWSE`)).toBeInTheDocument()
+    );
+
+    expect(document.querySelectorAll('[data-mml-node="mtext"][fill="red"][stroke="red"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-mml-node="merror"]')).toHaveLength(0);
   });
 
   it("normalizes dangling MathJax delimiters so stray markers do not render in red", () => {

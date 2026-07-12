@@ -126,30 +126,32 @@ def test_admin_auth_session_reports_admin_user_session(
     }
 
 
-def test_admin_shell_requires_authentication(admin_client: TestClient) -> None:
+def test_admin_shell_serves_login_shell_without_authentication(admin_client: TestClient) -> None:
     response = admin_client.get("/")
 
-    assert response.status_code == 401
-    assert response.json() == {"detail": "Authentication required"}
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
 
 
-def test_admin_shell_rejects_legacy_anonymous_session(admin_client: TestClient) -> None:
+def test_admin_shell_serves_login_shell_for_legacy_anonymous_session(admin_client: TestClient) -> None:
     create_legacy_anonymous_session(admin_client)
 
     response = admin_client.get("/")
 
-    assert response.status_code == 401
-    assert response.json() == {"detail": "User authentication required"}
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
 
 
-def test_admin_shell_rejects_non_admin_user(admin_client: TestClient, create_user) -> None:
+def test_admin_shell_serves_login_shell_for_non_admin_user(
+    admin_client: TestClient, create_user
+) -> None:
     create_user(username="member", password="member-pass-1")
     login_as_user(admin_client, username="member", password="member-pass-1")
 
     response = admin_client.get("/")
 
-    assert response.status_code == 403
-    assert response.json() == {"detail": "Admin access required"}
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
 
 
 def test_admin_shell_serves_dedicated_frontend_for_admin_user(

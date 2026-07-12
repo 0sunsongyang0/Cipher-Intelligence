@@ -26,6 +26,34 @@ export type AdminInviteListResponse = {
   items: AdminInviteItem[];
 };
 
+export type ConversationApiItem = {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConversationApiListResponse = {
+  items: ConversationApiItem[];
+};
+
+export type ConversationImportResult = ConversationApiItem & {
+  importedMessages: number;
+};
+
+export type MessageApiItem = {
+  id: number;
+  conversation_id: number;
+  role: ChatRole;
+  content: string;
+  created_at: string;
+  attachments?: MessageAttachment[];
+};
+
+export type MessageApiListResponse = {
+  items: MessageApiItem[];
+};
+
 export type AdminInviteCreateRequest = {
   code: string;
   label: string;
@@ -180,6 +208,7 @@ export type ZipConversationContext = {
   unsupportedReason: string | null;
   pendingAttachment?: boolean;
   uploading?: boolean;
+  errorMessage?: string | null;
 };
 
 export type UploadZipResult = ZipConversationContext;
@@ -227,7 +256,7 @@ export type AdminPromptMutationResult = AdminPrompt & {
 export function buildZipAttachmentMeta(
   context: Pick<
     ZipConversationContext,
-    "entryCount" | "extractedEntryCount" | "inventoryOnlyCount" | "uploading"
+    "entryCount" | "extractedEntryCount" | "inventoryOnlyCount" | "skippedEntryCount" | "uploading"
   >
 ): string {
   if (context.uploading) {
@@ -235,9 +264,10 @@ export function buildZipAttachmentMeta(
   }
 
   return [
-    `ZIP · 已扫描 ${context.entryCount} 个文件`,
-    `已提取内容 ${context.extractedEntryCount} 个`,
-    context.inventoryOnlyCount > 0 ? `仅保留清单 ${context.inventoryOnlyCount} 个` : null
+    `ZIP · 已扫描 ${context.entryCount} 项`,
+    `已提取 ${context.extractedEntryCount} 项`,
+    context.inventoryOnlyCount > 0 ? `仅清单 ${context.inventoryOnlyCount} 项` : null,
+    context.skippedEntryCount > 0 ? `已跳过 ${context.skippedEntryCount} 项` : null
   ]
     .filter((part): part is string => part !== null)
     .join(" · ");
@@ -246,6 +276,7 @@ export function buildZipAttachmentMeta(
 export type OutboundChatMessage = {
   role: ChatRole;
   content: string;
+  attachments?: MessageAttachment[];
 };
 
 export type StagedAttachment = {
@@ -254,6 +285,7 @@ export type StagedAttachment = {
   name: string;
   type: string;
   size: number;
+  retainedForZipContext?: boolean;
 };
 
 export type WebLlmInitProgress = {

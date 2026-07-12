@@ -7,7 +7,11 @@ import {
   type AdminOverview,
   type AdminPrompt,
   type AdminPromptMutationResult,
+  type ConversationApiItem,
+  type ConversationApiListResponse,
+  type ConversationImportResult,
   type DeepSeekModelId,
+  type MessageApiListResponse,
   type OutboundChatMessage,
   type SessionStatus,
   type UploadZipResult
@@ -16,6 +20,44 @@ import {
 type ErrorPayload = {
   detail?: string | Array<{ msg?: string }>;
 };
+
+function normalizeErrorText(text: string): string {
+  return text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function mapGatewayErrorMessage(response: Response, rawText: string): string | null {
+  const normalizedText = rawText.toLowerCase();
+
+  if (
+    response.status === 524 ||
+    ((response.status === 504 || response.status === 522) &&
+      normalizedText.includes("cloudflare"))
+  ) {
+    return "服务器处理超时了，请稍等一下再试。";
+  }
+
+  if (response.status === 504) {
+    return "服务器响应超时了，请稍后重试。";
+  }
+
+  if (response.status === 522) {
+    return "服务器暂时连不上，请稍后重试。";
+  }
+
+  if (response.status === 523) {
+    return "服务器地址暂时不可用，请稍后重试。";
+  }
+
+  if (
+    normalizedText.includes("error code 524") ||
+    normalizedText.includes("a timeout occurred") ||
+    (normalizedText.includes("cloudflare") && normalizedText.includes("timed out"))
+  ) {
+    return "服务器处理超时了，请稍等一下再试。";
+  }
+
+  return null;
+}
 
 async function readErrorMessage(response: Response): Promise<string> {
   try {
@@ -35,9 +77,16 @@ async function readErrorMessage(response: Response): Promise<string> {
     }
   } catch {
     try {
-      const text = (await response.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      const rawText = await response.text();
+      const mappedMessage = mapGatewayErrorMessage(response, rawText);
+
+      if (mappedMessage) {
+        return mappedMessage;
+      }
+
+      const text = normalizeErrorText(rawText);
       if (text) {
-        return text;
+        return text.length > 240 ? `${text.slice(0, 237)}...` : text;
       }
     } catch {
       return "Request failed. Please try again.";
@@ -90,6 +139,12 @@ export async function checkSession(): Promise<SessionStatus> {
   }
 
   return (await response.json()) as SessionStatus;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 export async function login(payload: {
@@ -356,6 +411,110 @@ export async function deleteAdminInvite(inviteId: number): Promise<void> {
   }
 }
 
+export async function listConversations(): Promise<ConversationApiListResponse> {
+  let response: Response;
+
+  try {
+    response = await fetch("/api/conversations", {
+      credentials: "include"
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return (await response.json()) as ConversationApiListResponse;
+}
+
+export async function createConversation(payload: { title: string }): Promise<ConversationApiItem> {
+  let response: Response;
+
+  try {
+    response = await fetch("/api/conversations", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return (await response.json()) as ConversationApiItem;
+}
+
+export async function getConversationMessages(
+  conversationId: string
+): Promise<MessageApiListResponse> {
+  let response: Response;
+
+  try {
+    response = await fetch(`/api/conversations/${conversationId}/messages`, {
+      credentials: "include"
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return (await response.json()) as MessageApiListResponse;
+}
+
+export async function deleteConversation(conversationId: string): Promise<void> {
+  let response: Response;
+
+  try {
+    response = await fetch(`/api/conversations/${conversationId}`, {
+      method: "DELETE",
+      credentials: "include"
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+}
+
+export async function importConversation(payload: {
+  title: string;
+  messages: OutboundChatMessage[];
+}): Promise<ConversationImportResult> {
+  let response: Response;
+
+  try {
+    response = await fetch("/api/conversations/import", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    throw toRequestError(error);
+  }
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return (await response.json()) as ConversationImportResult;
+}
+
 export async function streamChat(
   messages: OutboundChatMessage[],
   files: File[] = [],
@@ -448,5 +607,42 @@ export async function uploadZip(
     throw new Error(await readErrorMessage(response));
   }
 
-  return (await response.json()) as UploadZipResult;
+  const result = (await response.json()) as UploadZipResult;
+  if (!result.uploading) {
+    return result;
+  }
+
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    await delay(500);
+
+    let statusResponse: Response;
+    try {
+      statusResponse = await fetch(
+        `/api/upload_zip/${encodeURIComponent(result.zipContextId)}?conversationId=${encodeURIComponent(payload.conversationId)}&model=${encodeURIComponent(payload.model)}`,
+        {
+          credentials: "include"
+        }
+      );
+    } catch (error) {
+      throw toRequestError(error);
+    }
+
+    if (!statusResponse.ok) {
+      throw new Error(await readErrorMessage(statusResponse));
+    }
+
+    const statusResult = (await statusResponse.json()) as UploadZipResult;
+    if (statusResult.uploading) {
+      continue;
+    }
+
+    if (statusResult.errorMessage) {
+      throw new Error(statusResult.errorMessage);
+    }
+
+    return statusResult;
+  }
+
+  throw new Error("ZIP 解析耗时过长，请稍后重试。");
 }

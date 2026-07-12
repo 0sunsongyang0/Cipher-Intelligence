@@ -48,7 +48,7 @@ from app.routes.frontend import (
     router as frontend_router,
 )
 from app.routes.upload_zip import router as upload_zip_router
-from app.models import User
+from app.models import Conversation, Message, User
 from app.zip_context_store import zip_context_store
 
 
@@ -387,13 +387,114 @@ def test_upload_zip_returns_richer_context_summary_for_authenticated_session(cha
     assert payload == {
         "zipContextId": payload["zipContextId"],
         "archiveName": "notes.zip",
+        "entryCount": 0,
+        "extractedEntryCount": 0,
+        "inventoryOnlyCount": 0,
+        "skippedEntryCount": 0,
+        "supportedByCurrentModel": True,
+        "unsupportedReason": None,
+        "uploading": True,
+        "errorMessage": None,
+    }
+
+    status_response = chat_client.get(
+        f"/api/upload_zip/{payload['zipContextId']}",
+        params={
+            "conversationId": "conversation-1",
+            "model": "chatgpt-5.5-official",
+        },
+    )
+    assert status_response.status_code == 200
+    assert status_response.json() == {
+        "zipContextId": payload["zipContextId"],
+        "archiveName": "notes.zip",
         "entryCount": 2,
         "extractedEntryCount": 1,
         "inventoryOnlyCount": 1,
         "skippedEntryCount": 0,
         "supportedByCurrentModel": True,
         "unsupportedReason": None,
+        "uploading": False,
+        "errorMessage": None,
     }
+
+
+def test_upload_zip_returns_ready_context_immediately_for_local_requests(chat_client, monkeypatch) -> None:
+    login(chat_client)
+    monkeypatch.setattr("app.routes.upload_zip.should_parse_zip_synchronously", lambda _request: True)
+
+    response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-local",
+            "model": "chatgpt-5.5-official",
+        },
+        files={
+            "file": (
+                "notes.zip",
+                make_zip(
+                    {
+                        "notes.txt": b"hello",
+                        "audio/voice.mp3": b"fake-audio",
+                    }
+                ),
+                "application/zip",
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload["zipContextId"], str)
+    assert payload["zipContextId"]
+    assert payload == {
+        "zipContextId": payload["zipContextId"],
+        "archiveName": "notes.zip",
+        "entryCount": 2,
+        "extractedEntryCount": 1,
+        "inventoryOnlyCount": 1,
+        "skippedEntryCount": 0,
+        "supportedByCurrentModel": True,
+        "unsupportedReason": None,
+        "uploading": False,
+        "errorMessage": None,
+    }
+
+
+def test_chat_rejects_pending_zip_context_until_background_parse_finishes(chat_client, monkeypatch) -> None:
+    login(chat_client)
+
+    async def leave_pending(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.routes.upload_zip.process_zip_upload_background", leave_pending)
+
+    upload_response = chat_client.post(
+        "/api/upload_zip",
+        data={
+            "conversationId": "conversation-pending",
+            "model": "deepseek-v4-flash",
+        },
+        files={
+            "file": ("notes.zip", make_zip({"notes.txt": b"hello"}), "application/zip"),
+        },
+    )
+
+    assert upload_response.status_code == 200
+    zip_context_id = upload_response.json()["zipContextId"]
+
+    response = chat_client.post(
+        "/api/chat",
+        json={
+            "model": "deepseek-v4-flash",
+            "conversationId": "conversation-pending",
+            "zipContextId": zip_context_id,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "ZIP 压缩包仍在解析中，请稍后再试。"}
 
 
 def test_upload_zip_accepts_archives_that_exceed_text_budget_by_falling_back_to_inventory(
@@ -426,8 +527,22 @@ def test_upload_zip_accepts_archives_that_exceed_text_budget_by_falling_back_to_
     assert response.status_code == 200
     payload = response.json()
     assert payload["archiveName"] == "notes.zip"
-    assert payload["entryCount"] == 3
-    assert payload["extractedEntryCount"] == 3
+    assert payload["entryCount"] == 0
+    assert payload["extractedEntryCount"] == 0
+    assert payload["uploading"] is True
+
+    status_response = chat_client.get(
+        f"/api/upload_zip/{payload['zipContextId']}",
+        params={
+            "conversationId": "conversation-large-zip",
+            "model": "chatgpt-5.5-official",
+        },
+    )
+
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["entryCount"] == 3
+    assert status_payload["extractedEntryCount"] == 3
     assert payload["inventoryOnlyCount"] == 0
 
 
@@ -713,7 +828,7 @@ async def test_search_web_prefers_rewritten_news_queries_and_filters_junk(monkey
     async def fake_fetch_tavily_results(query: str, *, original_query: str) -> list[dict[str, str]]:
         captured_queries.append(query)
         assert original_query == "帮我查找今天的国内新闻"
-        if query == "国内新闻 最新":
+        if query == "中国国内新闻 最新":
             return [
                 {
                     "title": "中国新闻_央视网 (cctv.com)",
@@ -746,7 +861,7 @@ async def test_search_web_prefers_rewritten_news_queries_and_filters_junk(monkey
 
     results = await search_web("帮我查找今天的国内新闻")
 
-    assert captured_queries[0] == "国内新闻 最新"
+    assert captured_queries[0] == "中国国内新闻 最新"
     assert results == [
         {
             "title": "中国新闻_央视网 (cctv.com)",
@@ -754,6 +869,36 @@ async def test_search_web_prefers_rewritten_news_queries_and_filters_junk(monkey
             "snippet": "央视网国内新闻频道。",
         }
     ]
+
+
+def test_chat_route_uses_web_search_stream_when_flag_enabled(chat_client, monkeypatch) -> None:
+    login(chat_client)
+
+    async def fail_if_plain_stream_used(messages, model=None):
+        del messages, model
+        raise AssertionError("Plain chat stream should not be used when webSearch is enabled.")
+        yield
+
+    async def fake_stream_search_chat(*, messages, model, web_search):
+        assert web_search is True
+        assert model == "deepseek-v4-flash"
+        assert messages == [{"role": "user", "content": "上海今天天气怎么样"}]
+        yield "weather-search-ok"
+
+    monkeypatch.setattr("app.routes.chat.stream_chat_completion", fail_if_plain_stream_used)
+    monkeypatch.setattr("app.routes.chat.stream_search_chat", fake_stream_search_chat)
+
+    response = chat_client.post(
+        "/api/chat",
+        json={
+            "model": "deepseek-v4-flash",
+            "webSearch": True,
+            "messages": [{"role": "user", "content": "上海今天天气怎么样"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "weather-search-ok"
 
 
 @pytest.mark.anyio
@@ -796,6 +941,46 @@ async def test_search_web_filters_non_cn_sources_for_domestic_news_queries(monke
             "title": "中国新闻_央视网 (cctv.com)",
             "url": "https://news.cctv.com/china/",
             "snippet": "央视网国内新闻频道。",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_search_web_uses_weather_fallback_for_chinese_weather_queries(monkeypatch) -> None:
+    async def fail_fetch_tavily_results(query: str, *, original_query: str) -> list[dict[str, str]]:
+        raise AssertionError(f"Tavily should not be used for weather fallback: {query} / {original_query}")
+
+    async def fake_weather_search(query: str) -> list[dict[str, str]]:
+        assert query == "上海今天天气怎么样"
+        return [
+            {
+                "title": "上海当前天气",
+                "url": "https://open-meteo.com/example",
+                "snippet": "上海天气：晴，气温 31°C。",
+            }
+        ]
+
+    monkeypatch.setattr("app.web_search.fetch_tavily_results", fail_fetch_tavily_results)
+    monkeypatch.setattr("app.web_search.search_weather", fake_weather_search)
+    monkeypatch.setattr(
+        "app.web_search.settings",
+        SimpleNamespace(
+            search_provider="tavily",
+            search_result_limit=5,
+            search_timeout_seconds=12.0,
+            tavily_api_key="test-key",
+            tavily_search_depth="advanced",
+            tavily_news_time_range="day",
+        ),
+    )
+
+    results = await search_web("上海今天天气怎么样")
+
+    assert results == [
+        {
+            "title": "上海当前天气",
+            "url": "https://open-meteo.com/example",
+            "snippet": "上海天气：晴，气温 31°C。",
         }
     ]
 
@@ -1084,7 +1269,8 @@ def test_chat_appends_zip_inventory_context_to_last_user_message(chat_client, mo
         assert "[ZIP context]\nArchive: notes.zip\n\n" in messages[-1]["content"]
         assert "[Attached files]" in messages[-1]["content"]
         assert "[ZIP file inventory]" in messages[-1]["content"]
-        assert "audio/voice.mp3 | audio | 10 B | inventory-only" in messages[-1]["content"]
+        assert "| 文件 | 类型 | 大小 | 状态 | 备注 |" in messages[-1]["content"]
+        assert "| audio/voice.mp3 | audio | 10 B | inventory-only |  |" in messages[-1]["content"]
         assert "zip body text" in messages[-1]["content"]
         assert messages[-1]["content"].index("attachment body text") < messages[-1]["content"].index("[ZIP context]\nArchive: notes.zip\n\n")
         assert messages[-1]["content"].index("[ZIP context]\nArchive: notes.zip\n\n") < messages[-1]["content"].index("zip body text")
@@ -1109,7 +1295,7 @@ def test_chat_appends_zip_inventory_context_to_last_user_message(chat_client, mo
     )
 
     assert response.status_code == 200
-    assert response.text == "ok"
+    assert response.text.endswith("ok")
 
 
 def test_chat_allows_zip_context_for_openai_model(chat_client, monkeypatch) -> None:
@@ -1251,7 +1437,10 @@ def test_chat_reuses_stored_zip_images_for_openai_model(chat_client, monkeypatch
 
 def test_chat_reuses_stored_zip_images_for_claude_model(chat_client, monkeypatch) -> None:
     login(chat_client)
-    monkeypatch.setattr("app.zip_parser.extract_image_text", lambda _raw: "zip screenshot body")
+    def fail_if_ocr_called(_raw):
+        raise AssertionError("Claude ZIP uploads should not run OCR during upload.")
+
+    monkeypatch.setattr("app.zip_parser.extract_image_text", fail_if_ocr_called)
 
     upload_response = chat_client.post(
         "/api/upload_zip",
@@ -1274,7 +1463,7 @@ def test_chat_reuses_stored_zip_images_for_claude_model(chat_client, monkeypatch
         assert isinstance(messages[-1]["content"], list)
         assert messages[-1]["content"][0]["type"] == "text"
         assert "[ZIP context]" in messages[-1]["content"][0]["text"]
-        assert "zip screenshot body" in messages[-1]["content"][0]["text"]
+        assert "zip screenshot body" not in messages[-1]["content"][0]["text"]
         assert messages[-1]["content"][1] == {
             "type": "image_url",
             "image_url": {"url": "data:image/png;base64,ZmFrZS1pbWFnZQ=="},
@@ -1302,7 +1491,10 @@ def test_chat_reuses_stored_zip_images_for_claude_model(chat_client, monkeypatch
 
 def test_chat_skips_unreadable_zip_images_for_claude_model(chat_client, monkeypatch) -> None:
     login(chat_client)
-    monkeypatch.setattr("app.zip_parser.extract_image_text", lambda _raw: "")
+    def fail_if_ocr_called(_raw):
+        raise AssertionError("Claude ZIP uploads should not run OCR during upload.")
+
+    monkeypatch.setattr("app.zip_parser.extract_image_text", fail_if_ocr_called)
 
     upload_response = chat_client.post(
         "/api/upload_zip",
@@ -1456,7 +1648,7 @@ def test_chat_streams_plain_text_response_for_authenticated_session(chat_client,
 
     async def fake_stream_chat_completion(messages, model=None):
         assert model == "deepseek-v4-flash"
-        assert messages[0] == {"role": "system", "content": DEFAULT_CHAT_SYSTEM_PROMPT}
+        assert messages[0] == {"role": "system", "content": "ignore this local prompt"}
         assert messages[1:] == [{"role": "user", "content": "hello"}]
         yield "Hello"
         yield " campus"
@@ -1478,7 +1670,28 @@ def test_chat_streams_plain_text_response_for_authenticated_session(chat_client,
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
-    assert response.text == "Hello campus"
+    assert response.text == "\u001e__CIPHER_KEEPALIVE__\u001eHello campus"
+
+
+def test_chat_stream_prefixes_keepalive_marker_before_model_output(chat_client, monkeypatch) -> None:
+    login(chat_client)
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "deepseek-v4-flash"
+        yield "Hello"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.text == "\u001e__CIPHER_KEEPALIVE__\u001eHello"
 
 
 def test_primary_app_mounts_server_chat_route(client, monkeypatch) -> None:
@@ -1486,8 +1699,7 @@ def test_primary_app_mounts_server_chat_route(client, monkeypatch) -> None:
 
     async def fake_stream_chat_completion(messages, model=None):
         assert model == "deepseek-v4-flash"
-        assert messages[0] == {"role": "system", "content": DEFAULT_CHAT_SYSTEM_PROMPT}
-        assert messages[1:] == [{"role": "user", "content": "ping"}]
+        assert messages == [{"role": "user", "content": "ping"}]
         yield "ok"
 
     monkeypatch.setattr(
@@ -1501,7 +1713,7 @@ def test_primary_app_mounts_server_chat_route(client, monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.text == "ok"
+    assert response.text == "\u001e__CIPHER_KEEPALIVE__\u001eok"
 
 
 def test_chat_uses_saved_prompt_override(chat_client, monkeypatch, tmp_path) -> None:
@@ -2331,6 +2543,58 @@ def test_chat_still_accepts_plain_json_without_files(chat_client, monkeypatch) -
     assert response.text == "plain-ok"
 
 
+def test_chat_persists_messages_to_owned_conversation(chat_client, monkeypatch) -> None:
+    session_token = login(chat_client)
+    owner_session_id = get_owner_session_id(session_token)
+    owner_user_id = get_owner_user_id(session_token)
+
+    with SessionLocal() as db:
+        conversation = Conversation(
+            title="Cloud thread",
+            owner_session_id=owner_session_id,
+            owner_user_id=owner_user_id,
+        )
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+        conversation_id = conversation.id
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "deepseek-v4-flash"
+        yield "cloud"
+        yield " reply"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        json={
+            "messages": [
+                {"role": "user", "content": "hello cloud"},
+            ],
+            "conversationId": str(conversation_id),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "cloud reply"
+
+    with SessionLocal() as db:
+        stored_conversation = db.get(Conversation, conversation_id)
+        assert stored_conversation is not None
+        assert [message.role for message in stored_conversation.messages] == [
+            "user",
+            "assistant",
+        ]
+        assert [message.content for message in stored_conversation.messages] == [
+            "hello cloud",
+            "cloud reply",
+        ]
+
+
 def test_chat_rejects_malformed_json_body_with_controlled_error(chat_client) -> None:
     login(chat_client)
 
@@ -2342,6 +2606,76 @@ def test_chat_rejects_malformed_json_body_with_controlled_error(chat_client) -> 
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Malformed JSON body."}
+
+
+def test_chat_persists_uploaded_attachment_references_for_conversation_history(
+    chat_client, create_user, monkeypatch
+) -> None:
+    user = create_user(username="alice_attach", password="StrongPass123!")
+    login_user(chat_client, username="alice_attach", password="StrongPass123!")
+
+    with SessionLocal() as db:
+        conversation = Conversation(
+            title="Attachment persistence",
+            owner_session_id=0,
+            owner_user_id=user.id,
+        )
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+        conversation_id = conversation.id
+
+    async def fake_stream_chat_completion(messages, model=None):
+        yield "done"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        data={
+            "messages": json.dumps(
+                {
+                    "model": "deepseek-v4-flash",
+                    "conversationId": str(conversation_id),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "read this file",
+                            "attachments": [
+                                {
+                                    "id": "attachment-1",
+                                    "name": "notes.txt",
+                                    "type": "Text",
+                                    "size": 5,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+        },
+        files={
+            "files": ("notes.txt", b"hello", "text/plain"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text.endswith("done")
+
+    with SessionLocal() as db:
+        messages = (
+            db.query(Message)
+            .filter(Message.conversation_id == conversation_id)
+            .order_by(Message.id.asc())
+            .all()
+        )
+        assert [message.role for message in messages] == ["user", "assistant"]
+        assert len(messages[0].attachments) == 1
+        assert messages[0].attachments[0].attachment_id == "attachment-1"
+        assert messages[0].attachments[0].name == "notes.txt"
 
 
 def test_chat_rejects_malformed_multipart_messages_json_with_controlled_error(chat_client) -> None:
@@ -2440,6 +2774,68 @@ def test_chat_includes_docx_attachment_text_in_last_user_message(chat_client, mo
                 "doc.docx",
                 b"fake-docx",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+def test_chat_includes_pptx_attachment_text_in_last_user_message(chat_client, monkeypatch) -> None:
+    login(chat_client)
+    monkeypatch.setattr("app.attachments.extract_pptx_text", lambda _raw: "pptx slide text")
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "deepseek-v4-flash"
+        assert "slides.pptx" in messages[-1]["content"]
+        assert "pptx slide text" in messages[-1]["content"]
+        yield "ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        data={"messages": '[{"role":"user","content":"读取 PPTX"}]'},
+        files={
+            "files": (
+                "slides.pptx",
+                b"fake-pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "\u001e__CIPHER_KEEPALIVE__\u001eok"
+
+
+def test_chat_includes_ppt_attachment_text_in_last_user_message(chat_client, monkeypatch) -> None:
+    login(chat_client)
+    monkeypatch.setattr("app.attachments.extract_binary_text", lambda _raw: "ppt binary text")
+
+    async def fake_stream_chat_completion(messages, model=None):
+        assert model == "deepseek-v4-flash"
+        assert "slides.ppt" in messages[-1]["content"]
+        assert "ppt binary text" in messages[-1]["content"]
+        yield "ok"
+
+    monkeypatch.setattr(
+        "app.routes.chat.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    response = chat_client.post(
+        "/api/chat",
+        data={"messages": '[{"role":"user","content":"读取 PPT"}]'},
+        files={
+            "files": (
+                "slides.ppt",
+                b"fake-ppt",
+                "application/vnd.ms-powerpoint",
             ),
         },
     )
@@ -2637,8 +3033,11 @@ def test_chat_surfaces_upstream_errors_for_authenticated_session(chat_client, mo
         json={"messages": [{"role": "user", "content": "hello"}]},
     )
 
-    assert response.status_code == 502
-    assert response.json() == {"detail": "DeepSeek upstream returned 401 Unauthorized"}
+    assert response.status_code == 200
+    assert (
+        response.text
+        == "\u001e__CIPHER_KEEPALIVE__\u001e\u001e__CIPHER_ERROR__:DeepSeek upstream returned 401 Unauthorized\u001e"
+    )
 
 
 def test_chat_surfaces_synchronous_upstream_errors_for_authenticated_session(

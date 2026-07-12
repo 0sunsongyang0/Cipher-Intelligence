@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Route, Routes } from "react-router-dom";
 import { AuroraBackground } from "./components/AuroraBackground";
+import { useFrontendVersionRefresh } from "./hooks/useFrontendVersionRefresh";
 import { checkSession, login, logout } from "./lib/api";
 import { AdminPage } from "./pages/AdminPage";
 import type { AuthUser, SessionStatus } from "./types";
@@ -104,6 +105,8 @@ function AdminLoginPage({
 }
 
 export function AdminApp() {
+  useFrontendVersionRefresh();
+
   const [sessionKnown, setSessionKnown] = useState(false);
   const [sessionAuthenticated, setSessionAuthenticated] = useState(false);
   const [viewer, setViewer] = useState<AuthUser | null>(null);
