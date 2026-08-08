@@ -1,0 +1,4 @@
+interface:
+  display_name: "钓鱼事件分诊"
+  short_description: "综合邮件身份、认证、链接、话术与附件输出风险处置建议"
+  default_prompt: "Use $phishing-triage to triage suspicious email evidence and recommend actions."

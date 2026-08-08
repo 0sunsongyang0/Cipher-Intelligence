@@ -1,0 +1,15 @@
+id: firewall-blocklist-builder
+name: 防火墙封禁清单
+version: 1.0.0
+author: Cipher Intelligence
+description: 将已审核 IOC 去重并生成防火墙、DNS 和代理处置草案。
+source: builtin
+marketplace: {category: security-operations, tags: [Firewall, DNS, IOC], pricing: included, featured: true}
+permissions: {tools: [containment.prepare_network_list]}
+inputs:
+  required: [indicators]
+  properties:
+    indicators: {type: array, label: 已审核 IOC, description: 每行一个 IP、域名或 URL, itemType: string}
+    ticket: {type: string, label: 变更单号}
+    expiresHours: {type: number, label: 封禁时长（小时）, default: 24}
+limits: {maxItems: 500, timeoutSeconds: 10}

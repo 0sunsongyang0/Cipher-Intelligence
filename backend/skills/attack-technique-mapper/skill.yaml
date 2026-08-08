@@ -1,0 +1,13 @@
+id: attack-technique-mapper
+name: ATT&CK 行为映射
+version: 1.0.0
+author: Cipher Intelligence
+description: 将 CAPE 签名和调查行为映射为可审阅的 MITRE ATT&CK 技术。
+source: builtin
+marketplace: {category: malware-analysis, tags: [ATT&CK, CAPE, Behavior], pricing: included, featured: true}
+permissions: {tools: [attack.map_behavior]}
+inputs:
+  required: [behaviors]
+  properties:
+    behaviors: {type: array, label: 已观察行为, description: 每行一个 CAPE 签名或行为描述, itemType: string}
+limits: {maxItems: 100, timeoutSeconds: 10}

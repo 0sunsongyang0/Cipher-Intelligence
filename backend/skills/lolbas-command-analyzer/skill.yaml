@@ -1,0 +1,16 @@
+id: lolbas-command-analyzer
+name: LOLBAS 命令分析
+version: snapshot-3403b338875b
+author: LOLBAS Project
+description: 对 Windows 命令行识别 LOLBin、可疑功能和建议调查数据源。
+source: github
+sourceUrl: https://github.com/LOLBAS-Project/LOLBAS
+license: GPL-3.0
+upstream: {commit: 3403b338875b, snapshotDate: "2026-07-31", adapterVersion: 1}
+marketplace: {category: incident-response, tags: [LOLBAS, Windows, Process], pricing: professional, featured: true}
+permissions: {tools: [telemetry.analyze_windows_commands]}
+inputs:
+  required: [commands]
+  properties:
+    commands: {type: array, label: Windows 命令行, description: 每行一条进程命令行, itemType: string}
+limits: {maxItems: 300, timeoutSeconds: 10}

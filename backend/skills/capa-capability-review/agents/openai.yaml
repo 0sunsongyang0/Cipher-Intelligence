@@ -1,0 +1,4 @@
+interface:
+  display_name: "capa 能力复核"
+  short_description: "根据 Mandiant capa 能力命名整理样本行为、风险与复核清单"
+  default_prompt: "Use $capa-capability-review to review and categorize capabilities identified in a sample."

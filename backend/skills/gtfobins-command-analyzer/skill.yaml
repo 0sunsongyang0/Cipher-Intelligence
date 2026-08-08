@@ -1,0 +1,16 @@
+id: gtfobins-command-analyzer
+name: GTFOBins 命令分析
+version: snapshot-acd524623f9c
+author: GTFOBins Project
+description: 对 Linux/Unix 命令行识别提权、Shell、文件读写和绕过限制线索。
+source: github
+sourceUrl: https://github.com/GTFOBins/GTFOBins.github.io
+license: GPL-3.0
+upstream: {commit: acd524623f9c, snapshotDate: "2026-05-27", adapterVersion: 1}
+marketplace: {category: incident-response, tags: [GTFOBins, Linux, Privilege], pricing: professional, featured: true}
+permissions: {tools: [telemetry.analyze_unix_commands]}
+inputs:
+  required: [commands]
+  properties:
+    commands: {type: array, label: Linux/Unix 命令行, description: 每行一条 Shell 或进程命令行, itemType: string}
+limits: {maxItems: 300, timeoutSeconds: 10}

@@ -1,0 +1,18 @@
+id: phishing-triage
+name: 钓鱼事件分诊
+version: 1.0.0
+author: Cipher Intelligence
+description: 综合发件人、邮件认证、链接、话术与附件输出风险分诊。
+source: builtin
+marketplace: {category: incident-response, tags: [Phishing, Email, Triage], pricing: included, featured: true}
+permissions: {tools: [email.triage]}
+inputs:
+  required: [sender, subject]
+  properties:
+    sender: {type: string, label: 发件人}
+    subject: {type: string, label: 邮件主题}
+    authentication: {type: string, label: 认证结果, description: SPF、DKIM、DMARC 结果}
+    urls: {type: array, label: 邮件链接, itemType: string}
+    attachments: {type: array, label: 附件名称, itemType: string}
+    body: {type: string, label: 正文摘要}
+limits: {maxItems: 100, timeoutSeconds: 10}

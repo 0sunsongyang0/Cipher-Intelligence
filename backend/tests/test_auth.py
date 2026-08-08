@@ -3,6 +3,7 @@ from datetime import timedelta
 from pathlib import Path
 from shutil import rmtree
 from tempfile import mkdtemp
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -266,6 +267,19 @@ def test_database_bootstrap_adds_user_and_invite_schema(monkeypatch) -> None:
             }
             assert "owner_user_id" in conversation_columns
 
+            user_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(users)").fetchall()
+            }
+            assert "display_name" in user_columns
+            assert "avatar_filename" in user_columns
+            assert "casdoor_subject" in user_columns
+
+            user_indexes = {
+                row[1] for row in connection.execute("PRAGMA index_list(users)").fetchall()
+            }
+            assert database_module.USER_USERNAME_NORMALIZED_INDEX_NAME in user_indexes
+            assert database_module.USER_CASDOOR_SUBJECT_INDEX_NAME in user_indexes
+
             session_indexes = {
                 row[1] for row in connection.execute("PRAGMA index_list(sessions)").fetchall()
             }
@@ -334,7 +348,13 @@ def test_session_status_returns_current_user_payload(client, create_user) -> Non
     assert response.status_code == 200
     assert response.json() == {
         "authenticated": True,
-        "user": {"id": user.id, "username": "alice", "isAdmin": False},
+        "user": {
+            "id": user.id,
+            "username": "alice",
+            "displayName": "alice",
+            "avatarUrl": None,
+            "isAdmin": False,
+        },
     }
 
 
@@ -459,4 +479,276 @@ def test_omitted_app_env_rejects_default_auth_secrets(monkeypatch) -> None:
             _env_file=None,
             app_access_password="change-me",
             session_secret="change-me-too",
+        )
+
+
+def configure_casdoor(monkeypatch, *, admin_users: str = "") -> None:
+    values = {
+        "casdoor_enabled": True,
+        "casdoor_endpoint": "https://login.example.test",
+        "casdoor_client_id": "cipher-client",
+        "casdoor_client_secret": "cipher-secret",
+        "casdoor_organization_name": "cipher",
+        "casdoor_application_name": "cipher-ai",
+        "casdoor_display_name": "Cipher SSO",
+        "casdoor_admin_users": admin_users,
+        "casdoor_admin_roles": "",
+        "session_cookie_secure": False,
+    }
+    for name, value in values.items():
+        monkeypatch.setattr(config_module.settings, name, value)
+
+
+def test_casdoor_config_is_public_and_disabled_by_default(client, monkeypatch) -> None:
+    monkeypatch.setattr(config_module.settings, "casdoor_enabled", False)
+
+    response = client.get("/api/auth/casdoor/config")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "enabled": False,
+        "provider": "casdoor",
+        "displayName": config_module.settings.casdoor_display_name,
+        "managementUrl": "",
+    }
+
+
+def test_casdoor_login_redirect_uses_authorization_code_flow(client, monkeypatch) -> None:
+    configure_casdoor(monkeypatch)
+
+    response = client.get(
+        "/api/auth/casdoor/login?return_to=%2Fchat",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    authorization_url = urlsplit(response.headers["location"])
+    query = parse_qs(authorization_url.query)
+    assert authorization_url.scheme == "https"
+    assert authorization_url.netloc == "login.example.test"
+    assert authorization_url.path == "/login/oauth/authorize"
+    assert query["client_id"] == ["cipher-client"]
+    assert query["response_type"] == ["code"]
+    assert query["scope"] == ["openid profile email"]
+    assert query["language"] == ["zh"]
+    assert "theme" not in query
+    assert query["redirect_uri"] == ["http://testserver/api/auth/casdoor/callback"]
+    assert query["state"][0]
+    assert any(
+        name.startswith("cipher_casdoor_oauth_") for name in response.cookies.keys()
+    )
+
+
+def test_casdoor_login_forwards_supported_theme(client, monkeypatch) -> None:
+    configure_casdoor(monkeypatch)
+
+    response = client.get(
+        "/api/auth/casdoor/login?return_to=%2Fchat&theme=dark",
+        follow_redirects=False,
+    )
+
+    query = parse_qs(urlsplit(response.headers["location"]).query)
+    assert query["theme"] == ["dark"]
+
+
+def test_casdoor_login_maps_light_theme_to_casdoor_default(client, monkeypatch) -> None:
+    configure_casdoor(monkeypatch)
+
+    response = client.get(
+        "/api/auth/casdoor/login?return_to=%2Fchat&theme=light",
+        follow_redirects=False,
+    )
+
+    query = parse_qs(urlsplit(response.headers["location"]).query)
+    assert query["theme"] == ["default"]
+
+
+def test_casdoor_login_ignores_unsupported_theme(client, monkeypatch) -> None:
+    configure_casdoor(monkeypatch)
+
+    response = client.get(
+        "/api/auth/casdoor/login?return_to=%2Fchat&theme=neon",
+        follow_redirects=False,
+    )
+
+    query = parse_qs(urlsplit(response.headers["location"]).query)
+    assert "theme" not in query
+
+
+def test_parallel_casdoor_login_flows_keep_independent_state_cookies(
+    client, monkeypatch
+) -> None:
+    configure_casdoor(monkeypatch)
+
+    async def fake_exchange(**_kwargs):
+        return {
+            "sub": "cipher/parallel-user-id",
+            "preferred_username": "parallel-user",
+        }
+
+    monkeypatch.setattr("app.routes.auth.exchange_code_for_userinfo", fake_exchange)
+    light_response = client.get(
+        "/api/auth/casdoor/login?return_to=%2Fauth%2Fcasdoor%2Fembedded&theme=light",
+        follow_redirects=False,
+    )
+    dark_response = client.get(
+        "/api/auth/casdoor/login?return_to=%2Fauth%2Fcasdoor%2Fembedded&theme=dark",
+        follow_redirects=False,
+    )
+    light_state = parse_qs(urlsplit(light_response.headers["location"]).query)["state"][0]
+    dark_state = parse_qs(urlsplit(dark_response.headers["location"]).query)["state"][0]
+
+    assert light_state != dark_state
+    assert f"cipher_casdoor_oauth_{light_state}" in client.cookies
+    assert f"cipher_casdoor_oauth_{dark_state}" in client.cookies
+
+    callback_response = client.get(
+        f"/api/auth/casdoor/callback?code=parallel-code&state={light_state}",
+        follow_redirects=False,
+    )
+
+    assert callback_response.status_code == 200
+    assert '"status":"success"' in callback_response.text
+
+
+def test_local_login_and_registration_are_disabled_when_casdoor_is_enabled(
+    client, monkeypatch
+) -> None:
+    configure_casdoor(monkeypatch)
+
+    login_response = client.post(
+        "/api/auth/login",
+        json={"username": "local-user", "password": "local-password"},
+    )
+    register_response = client.post(
+        "/api/auth/register",
+        json={
+            "username": "local-user",
+            "password": "StrongPass123!",
+            "inviteCode": "unused",
+        },
+    )
+
+    assert login_response.status_code == 404
+    assert register_response.status_code == 404
+    assert login_response.json() == {"detail": "Local authentication is disabled"}
+    assert register_response.json() == {"detail": "Local authentication is disabled"}
+
+
+def test_casdoor_callback_provisions_user_and_issues_cipher_session(
+    client, monkeypatch
+) -> None:
+    configure_casdoor(monkeypatch)
+
+    async def fake_exchange(*, code: str, redirect_uri: str):
+        assert code == "authorization-code"
+        assert redirect_uri == "http://testserver/api/auth/casdoor/callback"
+        return {
+            "sub": "cipher/alice-id",
+            "preferred_username": "alice",
+            "name": "Alice Analyst",
+            "email": "alice@example.test",
+        }
+
+    monkeypatch.setattr("app.routes.auth.exchange_code_for_userinfo", fake_exchange)
+    login_response = client.get("/api/auth/casdoor/login", follow_redirects=False)
+    state = parse_qs(urlsplit(login_response.headers["location"]).query)["state"][0]
+
+    callback_response = client.get(
+        f"/api/auth/casdoor/callback?code=authorization-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback_response.status_code == 302
+    assert callback_response.headers["location"] == "/chat"
+    assert COOKIE_NAME in callback_response.cookies
+    session_response = client.get("/api/auth/session")
+    assert session_response.status_code == 200
+    assert session_response.json()["user"] == {
+        "id": 1,
+        "username": "alice",
+        "displayName": "Alice Analyst",
+        "avatarUrl": None,
+        "isAdmin": False,
+    }
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.username == "alice")).scalar_one()
+        assert user.casdoor_subject == "cipher/alice-id"
+
+
+def test_embedded_casdoor_callback_returns_same_origin_completion_bridge(
+    client, monkeypatch
+) -> None:
+    configure_casdoor(monkeypatch)
+
+    async def fake_exchange(**_kwargs):
+        return {
+            "sub": "cipher/embedded-user-id",
+            "preferred_username": "embedded-user",
+        }
+
+    monkeypatch.setattr("app.routes.auth.exchange_code_for_userinfo", fake_exchange)
+    login_response = client.get(
+        "/api/auth/casdoor/login?return_to=%2Fauth%2Fcasdoor%2Fembedded",
+        follow_redirects=False,
+    )
+    state = parse_qs(urlsplit(login_response.headers["location"]).query)["state"][0]
+
+    callback_response = client.get(
+        f"/api/auth/casdoor/callback?code=embedded-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback_response.status_code == 200
+    assert callback_response.headers["content-type"].startswith("text/html")
+    assert "cipher:casdoor-auth" in callback_response.text
+    assert '"status":"success"' in callback_response.text
+    assert "window.top===window" in callback_response.text
+    assert 'window.location.replace("/chat")' in callback_response.text
+    assert "frame-ancestors 'self'" in callback_response.headers["content-security-policy"]
+    assert COOKIE_NAME in callback_response.cookies
+
+
+def test_embedded_casdoor_error_returns_completion_bridge_without_session(
+    client, monkeypatch
+) -> None:
+    configure_casdoor(monkeypatch)
+    login_response = client.get(
+        "/api/auth/casdoor/login?return_to=%2Fauth%2Fcasdoor%2Fembedded",
+        follow_redirects=False,
+    )
+    state = parse_qs(urlsplit(login_response.headers["location"]).query)["state"][0]
+
+    callback_response = client.get(
+        f"/api/auth/casdoor/callback?error=access_denied&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback_response.status_code == 200
+    assert '"status":"error"' in callback_response.text
+    assert "access_denied" in callback_response.text
+    assert 'window.location.replace("/?casdoor_error=access_denied")' in callback_response.text
+    assert COOKIE_NAME not in callback_response.cookies
+
+
+def test_casdoor_callback_rejects_state_not_bound_to_browser(client, monkeypatch) -> None:
+    configure_casdoor(monkeypatch)
+    client.get("/api/auth/casdoor/login", follow_redirects=False)
+
+    response = client.get(
+        "/api/auth/casdoor/callback?code=authorization-code&state=attacker-state",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Casdoor login state is missing or expired"}
+
+
+def test_enabled_casdoor_settings_require_complete_application_config() -> None:
+    with pytest.raises(ValueError, match="CASDOOR_ENABLED requires"):
+        config_module.Settings(
+            _env_file=None,
+            app_env="test",
+            casdoor_enabled=True,
+            casdoor_endpoint="https://login.example.test",
         )

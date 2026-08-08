@@ -1,3 +1,5 @@
+from decimal import Decimal, ROUND_HALF_UP
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -7,6 +9,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_DIR.parent
 DEFAULT_DATABASE_URL = f"sqlite:///{(BACKEND_DIR / 'data' / 'app.db').as_posix()}"
 DEFAULT_PROMPT_CONFIG_PATH = BACKEND_DIR / "data" / "prompt-config.json"
+DEFAULT_AVATAR_STORAGE_PATH = BACKEND_DIR / "data" / "avatars"
 DEFAULT_CHAT_SYSTEM_PROMPT = """# Dual-Mode Autonomous AI Agent: General Daily Assistant + CAPE Sandbox Cybersecurity Analyst
 You are a dual-mode autonomous AI Agent with two fully independent operating modes: General Daily Assistant Mode and CAPE Sandbox Threat Analysis Mode. You will automatically detect user intent and switch between modes based on input content - no manual mode-switch commands are required from the user. Security analysis mode takes precedence whenever a valid CAPE artifact or cybersecurity analysis request is detected. You must execute all analysis workflows strictly per the rules below, with no skipped steps or speculative conclusions.
 
@@ -203,8 +206,26 @@ class Settings(BaseSettings):
     deepseek_api_key: str = "unset"
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
+    smart_model_routing_enabled: bool = True
+    smart_model_routing_economy_model: str = "deepseek-v4-flash"
+    smart_model_routing_strong_model: str = "deepseek-v4-pro"
+    smart_model_routing_long_context_tokens: int = 32_000
+    smart_model_routing_daily_budget_microusd: int = 0
+    smart_model_routing_timeout_seconds: float = 60.0
+    smart_model_routing_failure_threshold: int = 2
+    smart_model_routing_cooldown_seconds: float = 30.0
+    cape_base_url: str = "http://127.0.0.1:8080"
+    cape_api_token: str = ""
+    cape_poll_interval_seconds: float = 5.0
+    cape_submit_timeout_seconds: float = 30.0
+    cape_query_timeout_seconds: float = 20.0
+    cape_task_cost_microusd: int = 0
+    cape_task_cost_cny: Decimal = Decimal("1")
+    billing_cny_per_usd: Decimal = Decimal("7.2")
     openai_proxy_base_url: str = "http://[private-ip]:3887/v1"
     openai_official_api_key: str = "unset"
+    retention_cleanup_interval_seconds: int = 86400
+    retention_upload_days: int = 30
     openai_aws_api_key: str = "unset"
     openai_az_api_key: str = "unset"
     openai_backup_api_key: str = "unset"
@@ -217,12 +238,43 @@ class Settings(BaseSettings):
     tavily_api_key: str = "unset"
     tavily_search_depth: str = "advanced"
     tavily_news_time_range: str = "day"
+    virustotal_api_key: str = ""
+    urlhaus_api_key: str = ""
+    misp_url: str = ""
+    misp_api_key: str = ""
+    ioc_provider_config_json: str = "{}"
     prompt_config_path: str = str(DEFAULT_PROMPT_CONFIG_PATH)
     chat_system_prompt: str = DEFAULT_CHAT_SYSTEM_PROMPT
     database_url: str = DEFAULT_DATABASE_URL
+    avatar_storage_path: str = str(DEFAULT_AVATAR_STORAGE_PATH)
+    casdoor_enabled: bool = False
+    casdoor_endpoint: str = ""
+    casdoor_internal_endpoint: str = ""
+    casdoor_client_id: str = ""
+    casdoor_client_secret: str = ""
+    casdoor_organization_name: str = ""
+    casdoor_application_name: str = ""
+    casdoor_application_owner: str = "admin"
+    casdoor_display_name: str = "Casdoor"
+    casdoor_scope: str = "openid profile email"
+    casdoor_redirect_uri: str = ""
+    casdoor_admin_redirect_uri: str = ""
+    casdoor_auto_create_users: bool = True
+    casdoor_auto_link_users: bool = False
+    casdoor_admin_users: str = ""
+    casdoor_admin_roles: str = ""
+    casdoor_role_mapping: str = ""
+    casdoor_sync_groups_as_workspaces: bool = True
+    casdoor_commerce_enabled: bool = False
+    casdoor_plan_tier_mapping: str = ""
+    casdoor_timeout_seconds: float = 15.0
 
     model_config = SettingsConfigDict(
-        env_file=(str(BACKEND_DIR / ".env"), str(REPO_ROOT / ".env")),
+        # Tests must be hermetic: production credentials in a developer's .env
+        # must never change the test application configuration.
+        env_file=() if os.environ.get("APP_ENV", "").casefold() == "test" else (
+            str(BACKEND_DIR / ".env"), str(REPO_ROOT / ".env")
+        ),
         extra="ignore",
     )
 
@@ -235,6 +287,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "default auth secrets are not allowed outside explicit test/development mode"
             )
+        if self.casdoor_enabled and not self.casdoor_configured:
+            raise ValueError(
+                "CASDOOR_ENABLED requires CASDOOR_ENDPOINT, CASDOOR_CLIENT_ID, "
+                "CASDOOR_CLIENT_SECRET, CASDOOR_ORGANIZATION_NAME and "
+                "CASDOOR_APPLICATION_NAME"
+            )
+        if self.billing_cny_per_usd <= 0:
+            raise ValueError("BILLING_CNY_PER_USD must be greater than zero")
 
     @property
     def session_cookie_secure_enabled(self) -> bool:
@@ -242,6 +302,90 @@ class Settings(BaseSettings):
             return self.session_cookie_secure
         return self.app_env == "production"
 
+    @property
+    def effective_cape_task_cost_microusd(self) -> int:
+        if self.cape_task_cost_microusd > 0:
+            return self.cape_task_cost_microusd
+        cape_cost_cny = Decimal(str(self.cape_task_cost_cny))
+        cny_per_usd = Decimal(str(self.billing_cny_per_usd))
+        if cape_cost_cny <= 0:
+            return 0
+        microusd = cape_cost_cny * Decimal(1_000_000) / cny_per_usd
+        return int(microusd.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    @property
+    def casdoor_configured(self) -> bool:
+        return all(
+            value.strip()
+            for value in (
+                self.casdoor_endpoint,
+                self.casdoor_client_id,
+                self.casdoor_client_secret,
+                self.casdoor_organization_name,
+                self.casdoor_application_name,
+            )
+        )
+
+    @property
+    def casdoor_auth_enabled(self) -> bool:
+        # Settings validation rejects incomplete production configuration. Keep
+        # the runtime flag authoritative so test and embedded configurations can
+        # explicitly enable the provider without duplicating all deployment data.
+        return self.casdoor_enabled
+
+    @staticmethod
+    def _comma_separated_values(value: str) -> set[str]:
+        return {item.strip().casefold() for item in value.split(",") if item.strip()}
+
+    @property
+    def casdoor_admin_user_set(self) -> set[str]:
+        return self._comma_separated_values(self.casdoor_admin_users)
+
+    @property
+    def casdoor_admin_role_set(self) -> set[str]:
+        return self._comma_separated_values(self.casdoor_admin_roles)
+
+    @property
+    def casdoor_cipher_role_mapping(self) -> dict[str, str]:
+        defaults = {
+            "cipher-owner": "owner", "owner": "owner",
+            "cipher-admin": "admin", "admin": "admin",
+            "soc-analyst": "analyst", "analyst": "analyst",
+            "soc-reviewer": "reviewer", "reviewer": "reviewer",
+            "cipher-viewer": "viewer", "viewer": "viewer",
+        }
+        if not self.casdoor_role_mapping.strip():
+            return defaults
+        try:
+            parsed = __import__("json").loads(self.casdoor_role_mapping)
+        except (ValueError, TypeError):
+            return defaults
+        if not isinstance(parsed, dict):
+            return defaults
+        allowed = {"owner", "admin", "analyst", "reviewer", "viewer"}
+        defaults.update({str(key).strip().casefold(): str(value).strip().casefold() for key, value in parsed.items() if str(value).strip().casefold() in allowed})
+        return defaults
+
+    @property
+    def casdoor_subscription_tier_mapping(self) -> dict[str, str]:
+        defaults = {
+            "cipher-free": "free", "free": "free",
+            "cipher-standard": "standard", "standard": "standard",
+            "cipher-pro": "pro", "pro": "pro",
+            "cipher-enterprise": "enterprise", "enterprise": "enterprise",
+        }
+        if not self.casdoor_plan_tier_mapping.strip():
+            return defaults
+        try:
+            parsed = __import__("json").loads(self.casdoor_plan_tier_mapping)
+        except (ValueError, TypeError):
+            return defaults
+        if not isinstance(parsed, dict):
+            return defaults
+        allowed = {"free", "standard", "pro", "enterprise"}
+        defaults.update({str(key).strip().casefold(): str(value).strip().casefold()
+            for key, value in parsed.items() if str(value).strip().casefold() in allowed})
+        return defaults
+
 
 settings = Settings()
-

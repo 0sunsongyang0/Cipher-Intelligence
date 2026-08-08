@@ -3,13 +3,14 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
 from app.models import InviteCode
+from app.models import OrganizationMember
 from app.models import Session as SessionModel
 from app.models import User
 from app.models import now_utc
@@ -58,12 +59,14 @@ def get_client_ip(request: Request) -> str:
     return request.client.host if request.client is not None else ""
 
 
-def create_session(db: Session, user: User | None = None, *, commit: bool = True) -> str:
+def create_session(db: Session, user: User | None = None, *, request: Request | None = None, commit: bool = True) -> str:
     token = secrets.token_urlsafe(32)
     session = SessionModel(
         user_id=user.id if user is not None else None,
         token_hash=hash_token(token),
         expires_at=now_utc() + SESSION_TTL,
+        ip_address=get_client_ip(request)[:64] if request is not None else None,
+        user_agent=request.headers.get("user-agent", "")[:512] if request is not None else None,
     )
     db.add(session)
     if commit:
@@ -99,7 +102,10 @@ def get_session_record(db: Session, token: str | None) -> SessionModel | None:
 
 
 def get_user_by_username(db: Session, username: str) -> User | None:
-    return db.execute(select(User).where(User.username == username)).scalar_one_or_none()
+    normalized = username.strip().lower()
+    return db.execute(
+        select(User).where(func.lower(User.username) == normalized)
+    ).scalar_one_or_none()
 
 
 def validate_registration_username(db: Session, username: str) -> str | None:
@@ -119,9 +125,18 @@ def validate_registration_password(password: str) -> str | None:
 
 
 def create_user_account(
-    db: Session, *, username: str, password: str, commit: bool = True
+    db: Session,
+    *,
+    username: str,
+    password: str,
+    display_name: str | None = None,
+    commit: bool = True,
 ) -> User:
-    user = User(username=username, password_hash=hash_password(password))
+    user = User(
+        username=username.strip(),
+        display_name=display_name,
+        password_hash=hash_password(password),
+    )
     db.add(user)
     db.flush()
     if commit:
@@ -132,9 +147,13 @@ def create_user_account(
 
 def authenticate_user(db: Session, *, username: str, password: str) -> User | None:
     user = get_user_by_username(db, username)
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or user.auth_source != "local":
         return None
-    if not verify_password(password, user.password_hash):
+    try:
+        valid = verify_password(password, user.password_hash)
+    except (ValueError, TypeError):
+        valid = False
+    if not valid:
         return None
     return user
 
@@ -160,7 +179,8 @@ def consume_invite_code(db: Session, invite_code: InviteCode, *, commit: bool = 
 
 
 def is_duplicate_username_error(error: IntegrityError) -> bool:
-    return "users.username" in str(error.orig)
+    error_text = str(error.orig).lower()
+    return "users.username" in error_text or "ux_users_username_normalized" in error_text
 
 
 def get_session_user(db: Session, session: SessionModel | None) -> User | None:
@@ -170,7 +190,17 @@ def get_session_user(db: Session, session: SessionModel | None) -> User | None:
 
 
 def serialize_user(user: User) -> UserPayload:
-    return UserPayload(id=user.id, username=user.username, isAdmin=user.is_admin)
+    return UserPayload(
+        id=user.id,
+        username=user.username,
+        displayName=user.display_name or user.username,
+        avatarUrl=(
+            f"/api/account/avatars/{user.avatar_filename}"
+            if user.avatar_filename
+            else user.casdoor_avatar_url
+        ),
+        isAdmin=user.is_admin,
+    )
 
 
 def delete_session(db: Session, token: str | None) -> None:
@@ -203,6 +233,12 @@ def require_user_session(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User authentication required",
         )
+    request.state.user_id = session.user_id
+    request.state.organization_id = db.execute(
+        select(OrganizationMember.organization_id)
+        .where(OrganizationMember.user_id == session.user_id)
+        .order_by(OrganizationMember.id)
+    ).scalars().first()
     return session
 
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "GTFOBins 命令分析"
+  short_description: "识别 Linux 命令中的提权、Shell、文件读写与规避线索"
+  default_prompt: "Use $gtfobins-command-analyzer to review Linux commands for GTFOBins-style abuse patterns."

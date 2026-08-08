@@ -1,0 +1,17 @@
+id: checkov-iac-review
+name: Checkov IaC 风险复核
+version: 3.2.0-cipher.1
+author: Bridgecrew
+description: 对 Checkov IaC 检查结果分组、去重并生成修复优先级和变更前复核清单。
+source: github
+sourceUrl: https://github.com/bridgecrewio/checkov
+license: BSD-3-Clause
+upstream: {release: 3.2.0, adapterVersion: 1}
+marketplace: {category: cloud-security, tags: [Checkov, IaC, Terraform], pricing: professional, featured: false}
+permissions: {tools: [cloud.review_iac_findings]}
+inputs:
+  required: [results]
+  properties:
+    results: {type: object, label: Checkov Results JSON, description: 粘贴 Checkov 输出 JSON}
+    repository: {type: string, label: 仓库名称}
+limits: {maxItems: 500, timeoutSeconds: 10}

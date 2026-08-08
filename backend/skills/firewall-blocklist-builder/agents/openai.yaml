@@ -1,0 +1,4 @@
+interface:
+  display_name: "防火墙封禁清单"
+  short_description: "将已审核 IOC 生成可审阅、可追溯的网络封禁清单草案"
+  default_prompt: "Use $firewall-blocklist-builder to build a reviewed network blocklist from case IOCs."

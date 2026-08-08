@@ -1,0 +1,18 @@
+id: velociraptor-hunt-planner
+name: Velociraptor Hunt 计划
+version: 0.7.0-cipher.1
+author: Velocidex
+description: 将取证目标转换为 Velociraptor 查询计划和证据保留要求，不直接连接终端执行。
+source: github
+sourceUrl: https://github.com/Velocidex/velociraptor
+license: AGPL-3.0
+upstream: {release: v0.7.0, adapterVersion: 1}
+marketplace: {category: digital-forensics, tags: [Velociraptor, DFIR, VQL], pricing: professional, featured: true}
+permissions: {tools: [forensics.prepare_hunt_plan]}
+inputs:
+  required: [objectives]
+  properties:
+    objectives: {type: array, label: 取证目标, description: 每行一个主机或调查目标, itemType: string}
+    platforms: {type: array, label: 平台, default: [windows, linux], itemType: string}
+    authorizationConfirmed: {type: boolean, label: 已确认取证授权, default: false}
+limits: {maxItems: 100, timeoutSeconds: 10}

@@ -1,0 +1,27 @@
+id: yara-rule-builder
+name: YARA 样本规则草拟
+version: 1.0.0
+author: Cipher Intelligence
+description: 根据样本中经过确认的稳定字符串生成 YARA 规则草案，用于恶意文件检测与回归测试。
+source: github
+sourceUrl: https://github.com/Yara-Rules/rules
+marketplace:
+  category: malware-analysis
+  tags: [YARA, Malware, Detection]
+  pricing: professional
+  featured: true
+permissions:
+  tools: [detection.build_yara]
+inputs:
+  required: [name, strings]
+  properties:
+    name: {type: string, label: 规则名称, default: cipher_sample_rule}
+    author: {type: string, label: 作者, default: Cipher Intelligence}
+    strings:
+      type: array
+      label: 样本稳定字符串
+      description: 每行一个字符串
+      itemType: string
+limits:
+  timeoutSeconds: 10
+  maxItems: 50

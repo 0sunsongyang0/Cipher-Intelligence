@@ -86,6 +86,59 @@ def test_conversation_item_routes_only_expose_owned_user_data(
         assert db.query(Message).filter(Message.conversation_id == conversation.id).count() == 0
 
 
+def test_conversation_can_be_renamed_pinned_and_archived(client, create_user) -> None:
+    create_user(username="alice", password="StrongPass123!")
+    login(client, username="alice", password="StrongPass123!")
+    created = client.post("/api/conversations", json={"title": "Initial title"}).json()
+
+    renamed = client.patch(
+        f"/api/conversations/{created['id']}",
+        json={"title": "  Incident 42  ", "isPinned": True},
+    )
+    archived = client.patch(
+        f"/api/conversations/{created['id']}",
+        json={"isArchived": True},
+    )
+    case_updated = client.patch(
+        f"/api/conversations/{created['id']}",
+        json={
+            "caseStatus": "investigating",
+            "severity": "high",
+            "assignee": "SOC \u4e00\u7ebf",
+            "tags": ["\u6076\u610f\u8f6f\u4ef6", "\u9ad8\u4f18\u5148\u7ea7"],
+            "caseSummary": "\u5df2\u786e\u8ba4\u6837\u672c\u5b58\u5728\u6301\u4e45\u5316\u884c\u4e3a\u3002",
+        },
+    )
+
+    assert renamed.status_code == 200
+    assert renamed.json()["title"] == "Incident 42"
+    assert renamed.json()["is_pinned"] is True
+    assert archived.status_code == 200
+    assert archived.json()["is_archived"] is True
+    assert archived.json()["is_pinned"] is False
+    assert case_updated.status_code == 200
+    assert case_updated.json()["case_status"] == "investigating"
+    assert case_updated.json()["severity"] == "high"
+    assert case_updated.json()["assignee"] == "SOC \u4e00\u7ebf"
+    assert case_updated.json()["tags"] == ["\u6076\u610f\u8f6f\u4ef6", "\u9ad8\u4f18\u5148\u7ea7"]
+    assert case_updated.json()["case_summary"] == "\u5df2\u786e\u8ba4\u6837\u672c\u5b58\u5728\u6301\u4e45\u5316\u884c\u4e3a\u3002"
+
+
+def test_conversation_update_is_scoped_to_owner(client, create_user, create_conversation_for_user) -> None:
+    alice = create_user(username="alice", password="StrongPass123!")
+    create_user(username="bob", password="StrongPass456!")
+    conversation = create_conversation_for_user(user=alice, title="Alice only")
+    login(client, username="bob", password="StrongPass456!")
+
+    response = client.patch(
+        f"/api/conversations/{conversation.id}",
+        json={"title": "Stolen"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Conversation not found"}
+
+
 def test_import_conversation_persists_legacy_local_history(client, create_user) -> None:
     create_user(username="alice", password="StrongPass123!")
     login(client, username="alice", password="StrongPass123!")

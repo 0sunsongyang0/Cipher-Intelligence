@@ -1,0 +1,16 @@
+id: capa-capability-review
+name: capa 能力复核
+version: 9.4.0-cipher.1
+author: Mandiant FLARE Team
+description: 根据 Mandiant capa 能力命名对样本行为分类，输出风险摘要与人工复核清单。
+source: github
+sourceUrl: https://github.com/mandiant/capa
+license: Apache-2.0
+upstream: {release: v9.4.0, adapterVersion: 1}
+marketplace: {category: malware-analysis, tags: [capa, FLARE, Capability], pricing: included, featured: true}
+permissions: {tools: [malware.review_capabilities]}
+inputs:
+  required: [capabilities]
+  properties:
+    capabilities: {type: array, label: capa 能力列表, description: 每行一条 capa 命中能力, itemType: string}
+limits: {maxItems: 300, timeoutSeconds: 10}

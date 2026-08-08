@@ -1,0 +1,13 @@
+id: evidence-integrity-checker
+name: 证据完整性检查
+version: 1.0.0
+author: Cipher Intelligence
+description: 检查证据审核状态、内容哈希、重复、置信度和签名就绪状态。
+source: builtin
+marketplace: {category: security-operations, tags: [Evidence, Integrity, Audit], pricing: professional, featured: true}
+permissions: {tools: [evidence.check_integrity]}
+inputs:
+  required: [evidence]
+  properties:
+    evidence: {type: object, label: 证据列表 JSON, description: 包含 reviewStatus、contentHash、confidence 和 sourceTrust 的对象数组}
+limits: {maxItems: 500, timeoutSeconds: 10}

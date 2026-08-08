@@ -1,6 +1,7 @@
 import json
 import time
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -17,7 +18,6 @@ from app.config import settings
 from app.schemas import ChatModelId
 
 _MODEL_CATALOG_CACHE_TTL_SECONDS = 60.0
-_UPSTREAM_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 
 _model_catalog_cache: dict[tuple[str, str], tuple[float, set[str]]] = {}
 _CLAUDE_BACKUP_MODEL_IDS = {
@@ -35,7 +35,34 @@ class StreamedUpstreamError(RuntimeError):
     pass
 
 
-def parse_chunk_content(line: str) -> str | None:
+@dataclass
+class StreamUsage:
+    """Exact token usage reported by a compatible streaming upstream."""
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    model_id: str | None = None
+
+    @property
+    def is_exact(self) -> bool:
+        return self.input_tokens is not None and self.output_tokens is not None
+
+
+def _capture_chunk_usage(chunk: dict[str, Any], tracker: StreamUsage | None) -> None:
+    if tracker is None:
+        return
+    usage = chunk.get("usage")
+    if not isinstance(usage, dict):
+        return
+    input_tokens = usage.get("prompt_tokens", usage.get("input_tokens"))
+    output_tokens = usage.get("completion_tokens", usage.get("output_tokens"))
+    if isinstance(input_tokens, int) and input_tokens >= 0:
+        tracker.input_tokens = input_tokens
+    if isinstance(output_tokens, int) and output_tokens >= 0:
+        tracker.output_tokens = output_tokens
+
+
+def parse_chunk_content(line: str, usage_tracker: StreamUsage | None = None) -> str | None:
     if not line.startswith("data:"):
         return None
 
@@ -44,6 +71,8 @@ def parse_chunk_content(line: str) -> str | None:
         return None
 
     chunk = json.loads(data)
+    _capture_chunk_usage(chunk, usage_tracker)
+
     error = chunk.get("error")
     if isinstance(error, dict):
         message = str(error.get("message", "")).strip()
@@ -245,6 +274,9 @@ def build_ocr_fallback_messages(messages: Sequence[dict[str, Any]]) -> list[dict
 def resolve_upstream(model: ChatModelId | None) -> tuple[str, str, str, str]:
     requested_model = model or settings.deepseek_model
 
+    def preferred_key(primary: str, fallback: str) -> str:
+        return primary if primary.strip() and primary.strip().casefold() != "unset" else fallback
+
     if requested_model in {"deepseek-v4-flash", "deepseek-v4-pro"}:
         return (
             settings.deepseek_base_url,
@@ -281,7 +313,7 @@ def resolve_upstream(model: ChatModelId | None) -> tuple[str, str, str, str]:
         ),
         "claude-opus-4-7-official": (
             proxy_base_url,
-            settings.claude_official_api_key,
+            preferred_key(settings.claude_official_api_key, settings.openai_official_api_key),
             "claude-opus-4-7",
             "Claude official API key is not configured.",
         ),
@@ -293,13 +325,13 @@ def resolve_upstream(model: ChatModelId | None) -> tuple[str, str, str, str]:
         ),
         "claude-sonnet-4-6-az": (
             proxy_base_url,
-            settings.claude_az_api_key,
+            preferred_key(settings.claude_az_api_key, settings.openai_az_api_key),
             "claude-sonnet-4-6",
             "Claude Azure API key is not configured.",
         ),
         "claude-opus-4-7-backup": (
             proxy_base_url,
-            settings.claude_backup_api_key,
+            preferred_key(settings.claude_backup_api_key, settings.openai_backup_api_key),
             "claude-opus-4-7",
             "Claude backup API key is not configured.",
         ),
@@ -404,12 +436,13 @@ async def stream_upstream_response(
     url: str,
     headers: dict[str, str],
     payload: dict[str, object],
+    usage_tracker: StreamUsage | None = None,
 ) -> AsyncIterator[str]:
     async with client.stream("POST", url, headers=headers, json=payload) as response:
         response.raise_for_status()
 
         async for line in response.aiter_lines():
-            content = parse_chunk_content(line)
+            content = parse_chunk_content(line, usage_tracker)
             if content:
                 yield content
 
@@ -417,6 +450,8 @@ async def stream_upstream_response(
 def build_upstream_payload(
     messages: Sequence[dict[str, Any]],
     upstream_model: str,
+    *,
+    include_usage: bool = False,
 ) -> dict[str, object]:
     system_message: str | None = None
     normalized_messages = list(messages)
@@ -427,6 +462,8 @@ def build_upstream_payload(
         "messages": normalized_messages,
         "stream": True,
     }
+    if include_usage and not is_claude_model(upstream_model):
+        payload["stream_options"] = {"include_usage": True}
     if system_message is not None:
         payload["system"] = system_message
 
@@ -455,6 +492,7 @@ def extract_upstream_error_message(response: httpx.Response) -> str | None:
 async def stream_chat_completion(
     messages: Sequence[dict[str, Any]],
     model: ChatModelId | None = None,
+    usage_tracker: StreamUsage | None = None,
 ) -> AsyncIterator[str]:
     active_model = model
     base_url, api_key, upstream_model, missing_key_message = resolve_upstream(active_model)
@@ -469,12 +507,16 @@ async def stream_chat_completion(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=_UPSTREAM_TIMEOUT) as client:
+        timeout = httpx.Timeout(settings.smart_model_routing_timeout_seconds, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             effective_messages = list(messages)
             payload = build_upstream_payload(
                 effective_messages,
                 upstream_model,
+                include_usage=usage_tracker is not None,
             )
+            if usage_tracker is not None:
+                usage_tracker.model_id = active_model or upstream_model
             catalog_failovers_attempted: set[ChatModelId] = set()
             while should_validate_upstream_catalog(base_url, upstream_model):
                 catalog = await fetch_upstream_model_catalog(client, base_url, headers)
@@ -502,11 +544,14 @@ async def stream_chat_completion(
                 payload = build_upstream_payload(
                     effective_messages,
                     upstream_model,
+                    include_usage=usage_tracker is not None,
                 )
                 headers = {
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 }
+                if usage_tracker is not None:
+                    usage_tracker.model_id = active_model or upstream_model
 
             try:
                 async for content in stream_upstream_response(
@@ -514,6 +559,7 @@ async def stream_chat_completion(
                     url=url,
                     headers=headers,
                     payload=payload,
+                    usage_tracker=usage_tracker,
                 ):
                     yield content
                 return
@@ -526,12 +572,14 @@ async def stream_chat_completion(
                     fallback_payload = build_upstream_payload(
                         build_ocr_fallback_messages(effective_messages),
                         upstream_model,
+                        include_usage=usage_tracker is not None,
                     )
                     async for content in stream_upstream_response(
                         client,
                         url=url,
                         headers=headers,
                         payload=fallback_payload,
+                        usage_tracker=usage_tracker,
                     ):
                         yield content
                     return
@@ -548,16 +596,20 @@ async def stream_chat_completion(
                     failover_payload = build_upstream_payload(
                         effective_messages,
                         failover_model,
+                        include_usage=usage_tracker is not None,
                     )
                     failover_headers = {
                         "Authorization": f"Bearer {failover_api_key}",
                         "Content-Type": "application/json",
                     }
+                    if usage_tracker is not None:
+                        usage_tracker.model_id = active_model or failover_model
                     async for content in stream_upstream_response(
                         client,
                         url=failover_url,
                         headers=failover_headers,
                         payload=failover_payload,
+                        usage_tracker=usage_tracker,
                     ):
                         yield content
                     return
@@ -576,16 +628,20 @@ async def stream_chat_completion(
                     failover_payload = build_upstream_payload(
                         effective_messages,
                         failover_model,
+                        include_usage=usage_tracker is not None,
                     )
                     failover_headers = {
                         "Authorization": f"Bearer {failover_api_key}",
                         "Content-Type": "application/json",
                     }
+                    if usage_tracker is not None:
+                        usage_tracker.model_id = active_model or failover_model
                     async for content in stream_upstream_response(
                         client,
                         url=failover_url,
                         headers=failover_headers,
                         payload=failover_payload,
+                        usage_tracker=usage_tracker,
                     ):
                         yield content
                     return
@@ -604,16 +660,20 @@ async def stream_chat_completion(
                     failover_payload = build_upstream_payload(
                         effective_messages,
                         failover_model,
+                        include_usage=usage_tracker is not None,
                     )
                     failover_headers = {
                         "Authorization": f"Bearer {failover_api_key}",
                         "Content-Type": "application/json",
                     }
+                    if usage_tracker is not None:
+                        usage_tracker.model_id = active_model or failover_model
                     async for content in stream_upstream_response(
                         client,
                         url=failover_url,
                         headers=failover_headers,
                         payload=failover_payload,
+                        usage_tracker=usage_tracker,
                     ):
                         yield content
                     return

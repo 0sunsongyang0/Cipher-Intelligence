@@ -1,13 +1,18 @@
 ﻿from __future__ import annotations
 
 import ipaddress
+from time import perf_counter
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from sqlalchemy.orm import Session
 
 from app.attachments import AttachmentError
 from app.auth import require_user_session
+from app.database import SessionLocal, get_db
 from app.models import Session as SessionModel
+from app.observability import emit_event
 from app.schemas import ChatModelId, UploadZipResponse
+from app.usage_governance import organization_id_for_user
 from app.zip_context_store import get_zip_model_support, zip_context_store
 from app.zip_parser import parse_zip_upload
 
@@ -50,9 +55,15 @@ async def upload_zip(
     model: ChatModelId = Form(...),
     file: UploadFile = File(...),
     current_session: SessionModel = Depends(require_user_session),
+    db: Session = Depends(get_db),
 ) -> UploadZipResponse:
     filename = file.filename or "upload.zip"
     if not filename.lower().endswith(".zip"):
+        emit_event(db, event_name="file.process", user_id=current_session.user_id,
+                   organization_id=organization_id_for_user(db, current_session.user_id),
+                   route="/api/upload_zip", error_type="InvalidFileType",
+                   status_code=status.HTTP_400_BAD_REQUEST, metadata={"filename": filename})
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=NON_ZIP_UPLOAD_ERROR,
@@ -60,6 +71,7 @@ async def upload_zip(
 
     raw = await file.read()
     supported_by_current_model, unsupported_reason = get_zip_model_support(model)
+    started = perf_counter()
 
     if should_parse_zip_synchronously(request):
         try:
@@ -69,6 +81,12 @@ async def upload_zip(
                 eager_image_ocr=should_eagerly_extract_zip_image_text(model),
             )
         except AttachmentError as exc:
+            emit_event(db, event_name="file.process", user_id=current_session.user_id,
+                       organization_id=organization_id_for_user(db, current_session.user_id),
+                       route="/api/upload_zip", duration_ms=(perf_counter() - started) * 1000,
+                       error_type=type(exc).__name__, status_code=status.HTTP_400_BAD_REQUEST,
+                       metadata={"filename": filename, "bytes": len(raw), "mode": "sync"})
+            db.commit()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(exc),
@@ -79,6 +97,15 @@ async def upload_zip(
             conversation_id=conversationId,
             parsed=parsed,
         )
+        emit_event(db, event_name="file.process", user_id=current_session.user_id,
+                   organization_id=organization_id_for_user(db, current_session.user_id),
+                   route="/api/upload_zip", task_id=stored.zip_context_id,
+                   duration_ms=(perf_counter() - started) * 1000, status_code=200,
+                   metadata={"filename": filename, "bytes": len(raw), "mode": "sync",
+                             "entry_count": stored.entry_count,
+                             "extracted_entry_count": stored.extracted_entry_count,
+                             "skipped_entry_count": stored.skipped_entry_count})
+        db.commit()
         return UploadZipResponse(
             zipContextId=stored.zip_context_id,
             archiveName=stored.archive_name,
@@ -97,6 +124,12 @@ async def upload_zip(
         conversation_id=conversationId,
         archive_name=filename,
     )
+    emit_event(db, event_name="file.process", user_id=current_session.user_id,
+               organization_id=organization_id_for_user(db, current_session.user_id),
+               route="/api/upload_zip", task_id=pending.zip_context_id,
+               duration_ms=(perf_counter() - started) * 1000, status_code=status.HTTP_202_ACCEPTED,
+               metadata={"filename": filename, "bytes": len(raw), "mode": "async", "status": "queued"})
+    db.commit()
 
     background_tasks.add_task(
         process_zip_upload_background,
@@ -161,6 +194,7 @@ async def process_zip_upload_background(
     raw: bytes,
     model: ChatModelId,
 ) -> None:
+    started = perf_counter()
     try:
         parsed = await parse_zip_upload(
             archive_name,
@@ -175,6 +209,15 @@ async def process_zip_upload_background(
             archive_name=archive_name,
             error_message=str(exc),
         )
+        with SessionLocal() as db:
+            emit_event(db, event_name="file.process", user_id=owner_user_id,
+                       organization_id=organization_id_for_user(db, owner_user_id),
+                       route="/api/upload_zip", task_id=zip_context_id,
+                       duration_ms=(perf_counter() - started) * 1000,
+                       error_type=type(exc).__name__, status_code=status.HTTP_400_BAD_REQUEST,
+                       metadata={"filename": archive_name, "bytes": len(raw), "mode": "async",
+                                 "status": "failed"})
+            db.commit()
         return
 
     zip_context_store.mark_ready(
@@ -183,3 +226,13 @@ async def process_zip_upload_background(
         conversation_id=conversation_id,
         parsed=parsed,
     )
+    with SessionLocal() as db:
+        emit_event(db, event_name="file.process", user_id=owner_user_id,
+                   organization_id=organization_id_for_user(db, owner_user_id),
+                   route="/api/upload_zip", task_id=zip_context_id,
+                   duration_ms=(perf_counter() - started) * 1000, status_code=200,
+                   metadata={"filename": archive_name, "bytes": len(raw), "mode": "async",
+                             "status": "ready", "entry_count": parsed.entry_count,
+                             "extracted_entry_count": parsed.extracted_entry_count,
+                             "skipped_entry_count": parsed.skipped_entry_count})
+        db.commit()

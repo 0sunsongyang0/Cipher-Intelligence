@@ -1,0 +1,17 @@
+id: semgrep-rule-reviewer
+name: Semgrep 规则复核
+version: 1.100.0-cipher.1
+author: Semgrep
+description: 检查 Semgrep 规则元数据、严重度和误报风险，输出合并前的人工复核清单。
+source: github
+sourceUrl: https://github.com/semgrep/semgrep-rules
+license: LGPL-2.1
+upstream: {release: v1.100.0, adapterVersion: 1}
+marketplace: {category: detection-engineering, tags: [Semgrep, SAST, Code Security], pricing: included, featured: true}
+permissions: {tools: [detection.review_semgrep_rule]}
+inputs:
+  required: [rule]
+  properties:
+    rule: {type: object, label: Semgrep Rule YAML JSON, description: 粘贴待复核规则的 YAML 转换对象}
+    changedFiles: {type: array, label: 受影响文件, itemType: string}
+limits: {maxItems: 100, timeoutSeconds: 10}

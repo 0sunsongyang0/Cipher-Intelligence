@@ -2,19 +2,21 @@ import importlib
 from pathlib import Path
 from shutil import rmtree
 from tempfile import mkdtemp
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.auth import COOKIE_NAME, create_session
+from app.casdoor_commerce import CommerceSyncResult
 from app.config import DEFAULT_CHAT_SYSTEM_PROMPT, settings
 from app.database import engine
 from app.database import SessionLocal
-from app.models import InviteCode
+from app.models import AuditLog, ChatRequestMetric, Conversation, InviteCode, Message, MessageFeedback, now_utc
 from app.rate_limit import reset_failed_attempts
 
-TEST_DATABASE_PATH = Path("backend/data/test.db")
+TEST_DATABASE_PATH = Path(settings.database_url.removeprefix("sqlite:///"))
 
 
 @pytest.fixture()
@@ -59,6 +61,62 @@ def admin_client(monkeypatch, tmp_path):
 def login_as_user(client: TestClient, *, username: str, password: str) -> None:
     response = client.post("/api/auth/login", json={"username": username, "password": password})
     assert response.status_code == 200
+
+
+def test_admin_can_trigger_user_commerce_sync(admin_client, create_user, monkeypatch) -> None:
+    create_user(username="billing-admin", password="admin-pass-1", is_admin=True)
+    buyer = create_user(username="billing-buyer", password="buyer-pass-1")
+    login_as_user(admin_client, username="billing-admin", password="admin-pass-1")
+
+    async def fake_sync(_db, user):
+        user.subscription_tier = "pro"
+        return CommerceSyncResult("pro", 1, 2, now_utc())
+
+    monkeypatch.setattr("app.routes.commerce.sync_user_commerce", fake_sync)
+    response = admin_client.post(f"/api/admin/commerce/users/{buyer.id}/sync")
+
+    assert response.status_code == 200
+    assert response.json()["userId"] == buyer.id
+    assert response.json()["tier"] == "pro"
+    assert response.json()["activeSubscriptions"] == 1
+    assert response.json()["totalSubscriptions"] == 2
+
+
+def test_admin_audit_logs_are_filterable_exportable_and_chain_verified(
+    admin_client: TestClient, create_user
+) -> None:
+    create_user(username="audit-admin", password="admin-pass-1", is_admin=True)
+    login_as_user(admin_client, username="audit-admin", password="admin-pass-1")
+
+    response = admin_client.get("/api/admin/audit-logs?eventType=auth.login&actor=audit")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["action"] == "login"
+    assert payload["items"][0]["actorUsername"] == "audit-admin"
+    assert len(payload["items"][0]["entryHash"]) == 64
+
+    verified = admin_client.get("/api/admin/audit-logs/verify")
+    assert verified.json() == {"valid": True, "entries": 1, "brokenAtId": None}
+    exported = admin_client.get("/api/admin/audit-logs/export")
+    assert exported.status_code == 200
+    assert "cipher-audit-logs.csv" in exported.headers["content-disposition"]
+    assert "auth.login" in exported.text
+
+
+def test_admin_audit_chain_detects_database_tampering(admin_client: TestClient, create_user) -> None:
+    create_user(username="audit-admin", password="admin-pass-1", is_admin=True)
+    login_as_user(admin_client, username="audit-admin", password="admin-pass-1")
+    with SessionLocal() as db:
+        item = db.scalar(select(AuditLog).order_by(AuditLog.id))
+        assert item is not None
+        item.action = "tampered"
+        db.commit()
+
+    response = admin_client.get("/api/admin/audit-logs/verify")
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert response.json()["brokenAtId"] == 1
 
 
 def create_legacy_anonymous_session(client: TestClient) -> None:
@@ -106,7 +164,13 @@ def test_admin_auth_session_reports_non_admin_user_session(
     assert response.status_code == 200
     assert response.json() == {
         "authenticated": True,
-        "user": {"id": user.id, "username": "member", "isAdmin": False},
+        "user": {
+            "id": user.id,
+            "username": "member",
+            "displayName": "member",
+            "avatarUrl": None,
+            "isAdmin": False,
+        },
     }
 
 
@@ -122,7 +186,146 @@ def test_admin_auth_session_reports_admin_user_session(
     assert response.status_code == 200
     assert response.json() == {
         "authenticated": True,
-        "user": {"id": user.id, "username": "admin", "isAdmin": True},
+        "user": {
+            "id": user.id,
+            "username": "admin",
+            "displayName": "admin",
+            "avatarUrl": None,
+            "isAdmin": True,
+        },
+    }
+
+
+def test_admin_local_login_is_disabled_when_casdoor_is_enabled(
+    admin_client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "casdoor_enabled", True)
+
+    response = admin_client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "local-password"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Local authentication is disabled"}
+
+
+def test_admin_casdoor_login_requires_mapped_admin_identity(
+    admin_client: TestClient, monkeypatch
+) -> None:
+    casdoor_values = {
+        "casdoor_enabled": True,
+        "casdoor_endpoint": "https://login.example.test",
+        "casdoor_client_id": "cipher-client",
+        "casdoor_client_secret": "cipher-secret",
+        "casdoor_organization_name": "cipher",
+        "casdoor_application_name": "cipher-ai",
+        "casdoor_admin_users": "boss",
+        "casdoor_admin_roles": "",
+        "session_cookie_secure": False,
+    }
+    for name, value in casdoor_values.items():
+        monkeypatch.setattr(settings, name, value)
+
+    async def fake_exchange(*, code: str, redirect_uri: str):
+        assert code == "admin-code"
+        assert redirect_uri == "http://testserver/api/auth/casdoor/callback"
+        return {
+            "sub": "cipher/boss-id",
+            "preferred_username": "boss",
+            "name": "Cipher Administrator",
+        }
+
+    monkeypatch.setattr("app.routes.auth.exchange_code_for_userinfo", fake_exchange)
+    login_response = admin_client.get(
+        "/api/auth/casdoor/login?return_to=%2Fmodels", follow_redirects=False
+    )
+    state = parse_qs(urlsplit(login_response.headers["location"]).query)["state"][0]
+
+    callback_response = admin_client.get(
+        f"/api/auth/casdoor/callback?code=admin-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback_response.status_code == 302
+    assert callback_response.headers["location"] == "/models"
+    session_response = admin_client.get("/api/auth/session")
+    assert session_response.json()["authenticated"] is True
+    assert session_response.json()["user"]["isAdmin"] is True
+
+
+def test_admin_casdoor_embedded_login_returns_completion_bridge(
+    admin_client: TestClient, monkeypatch
+) -> None:
+    casdoor_values = {
+        "casdoor_enabled": True,
+        "casdoor_endpoint": "https://login.example.test",
+        "casdoor_client_id": "cipher-client",
+        "casdoor_client_secret": "cipher-secret",
+        "casdoor_organization_name": "cipher",
+        "casdoor_application_name": "cipher-ai",
+        "casdoor_admin_users": "boss",
+        "casdoor_admin_roles": "",
+        "session_cookie_secure": False,
+    }
+    for name, value in casdoor_values.items():
+        monkeypatch.setattr(settings, name, value)
+
+    async def fake_exchange(**_kwargs):
+        return {"sub": "cipher/boss-id", "preferred_username": "boss"}
+
+    monkeypatch.setattr("app.routes.auth.exchange_code_for_userinfo", fake_exchange)
+    login_response = admin_client.get(
+        "/api/auth/casdoor/login?return_to=%2Fauth%2Fcasdoor%2Fembedded",
+        follow_redirects=False,
+    )
+    state = parse_qs(urlsplit(login_response.headers["location"]).query)["state"][0]
+
+    callback_response = admin_client.get(
+        f"/api/auth/casdoor/callback?code=admin-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback_response.status_code == 200
+    assert callback_response.headers["content-type"].startswith("text/html")
+    assert '"status":"success"' in callback_response.text
+    assert admin_client.get("/api/auth/session").json()["user"]["isAdmin"] is True
+
+
+def test_admin_casdoor_login_denies_unmapped_identity(
+    admin_client: TestClient, monkeypatch
+) -> None:
+    casdoor_values = {
+        "casdoor_enabled": True,
+        "casdoor_endpoint": "https://login.example.test",
+        "casdoor_client_id": "cipher-client",
+        "casdoor_client_secret": "cipher-secret",
+        "casdoor_organization_name": "cipher",
+        "casdoor_application_name": "cipher-ai",
+        "casdoor_admin_users": "boss",
+        "casdoor_admin_roles": "",
+        "session_cookie_secure": False,
+    }
+    for name, value in casdoor_values.items():
+        monkeypatch.setattr(settings, name, value)
+
+    async def fake_exchange(**_kwargs):
+        return {"sub": "cipher/member-id", "preferred_username": "member"}
+
+    monkeypatch.setattr("app.routes.auth.exchange_code_for_userinfo", fake_exchange)
+    login_response = admin_client.get("/api/auth/casdoor/login", follow_redirects=False)
+    state = parse_qs(urlsplit(login_response.headers["location"]).query)["state"][0]
+
+    callback_response = admin_client.get(
+        f"/api/auth/casdoor/callback?code=member-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback_response.status_code == 302
+    assert "casdoor_error=" in callback_response.headers["location"]
+    assert admin_client.get("/api/auth/session").json() == {
+        "authenticated": False,
+        "user": None,
     }
 
 
@@ -219,7 +422,7 @@ def test_admin_overview_returns_service_model_and_file_sections(
                 "localUrl": "http://127.0.0.1:8000/chat",
                 "publicUrl": "https://[private-host]/chat",
             },
-            "models": {"providers": [{"provider": "DeepSeek", "healthy": 2, "total": 2}]},
+            "models": {"providers": [{"provider": "Cipher 轻量", "healthy": 2, "total": 2}]},
             "files": {"uploadLimit": 10, "zipEnabled": True, "zipContextCount": 3},
         },
     )
@@ -229,6 +432,46 @@ def test_admin_overview_returns_service_model_and_file_sections(
     assert response.status_code == 200
     assert response.json()["services"]["backend"]["pid"] == 1001
     assert response.json()["files"]["zipContextCount"] == 3
+
+
+def test_admin_quality_aggregates_requests_and_feedback(admin_client: TestClient, create_user) -> None:
+    admin = create_user(username="quality-admin", password="admin-pass-1", is_admin=True)
+    login_as_user(admin_client, username=admin.username, password="admin-pass-1")
+    with SessionLocal() as db:
+        conversation = Conversation(title="Quality", owner_session_id=0, owner_user_id=admin.id)
+        db.add(conversation)
+        db.flush()
+        answer = Message(conversation_id=conversation.id, role="assistant", content="answer")
+        db.add(answer)
+        db.flush()
+        db.add_all([
+            ChatRequestMetric(
+                user_id=admin.id, conversation_id=conversation.id,
+                assistant_message_id=answer.id, model_id="deepseek-v4-pro",
+                provider="deepseek", status="success", first_token_ms=120,
+                duration_ms=800, response_chars=6,
+            ),
+            ChatRequestMetric(
+                user_id=admin.id, conversation_id=conversation.id,
+                model_id="deepseek-v4-pro", provider="deepseek", status="error",
+                duration_ms=200, error_message="upstream failed",
+            ),
+            MessageFeedback(message_id=answer.id, user_id=admin.id, rating="up"),
+        ])
+        db.commit()
+
+    response = admin_client.get("/api/admin/quality?days=7")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["totalRequests"] == 2
+    assert payload["successfulRequests"] == 1
+    assert payload["errorRequests"] == 1
+    assert payload["successRate"] == 50.0
+    assert payload["avgFirstTokenMs"] == 120.0
+    assert payload["avgDurationMs"] == 500.0
+    assert payload["feedback"] == {"up": 1}
+    assert payload["models"][0]["thumbsUp"] == 1
 
 
 @pytest.mark.parametrize(
@@ -673,3 +916,14 @@ def test_control_actions_reject_unknown_action() -> None:
 
     with pytest.raises(ValueError, match=r"^Unsupported admin control action: restart-all$"):
         manager.run_action("restart-all")
+
+
+def test_powershell_inspection_degrades_when_executable_is_unavailable(monkeypatch) -> None:
+    from app.admin_control import _run_powershell_json
+
+    def missing_powershell(*_args, **_kwargs):
+        raise FileNotFoundError("powershell.exe")
+
+    monkeypatch.setattr("app.admin_control.subprocess.run", missing_powershell)
+
+    assert _run_powershell_json("ConvertTo-Json @{}") == {}

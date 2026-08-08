@@ -1,0 +1,27 @@
+id: sigma-rule-builder
+name: Sigma 检测规则草拟
+version: 1.0.0
+author: Cipher Intelligence
+description: 将案件中已审核的 IOC 转换为可审阅的 Sigma 规则草案，保留人工验证与误报检查要求。
+source: github
+sourceUrl: https://github.com/SigmaHQ/sigma
+marketplace:
+  category: detection-engineering
+  tags: [Sigma, SIEM, IOC]
+  pricing: included
+  featured: true
+permissions:
+  tools: [detection.build_sigma]
+inputs:
+  required: [title, logsource, indicators]
+  properties:
+    title: {type: string, label: 规则标题, default: Cipher IOC detection}
+    logsource: {type: string, label: 日志来源, default: proxy}
+    indicators:
+      type: array
+      label: 检测指标
+      description: 每行一个已审核 IOC
+      itemType: string
+limits:
+  timeoutSeconds: 10
+  maxItems: 100

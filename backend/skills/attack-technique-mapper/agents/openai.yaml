@@ -1,0 +1,4 @@
+interface:
+  display_name: "ATT&CK 行为映射"
+  short_description: "将样本与入侵行为映射为 MITRE ATT&CK 技术清单"
+  default_prompt: "Use $attack-technique-mapper to map observed malware behaviors to ATT&CK techniques."

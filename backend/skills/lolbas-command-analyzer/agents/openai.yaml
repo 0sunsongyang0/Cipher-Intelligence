@@ -1,0 +1,4 @@
+interface:
+  display_name: "LOLBAS 命令分析"
+  short_description: "识别 Windows 命令行中的 LOLBin、可疑用途和建议调查动作"
+  default_prompt: "Use $lolbas-command-analyzer to identify suspicious living-off-the-land Windows commands."

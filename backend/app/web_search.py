@@ -148,7 +148,7 @@ def build_web_search_context(query: str, results: list[dict[str, str]]) -> str:
         lines.extend(
             [
                 "",
-                f"{index}. Title: {item['title']}",
+                f"[W{index}] Title: {item['title']}",
                 f"   URL: {item['url']}",
                 f"   Snippet: {item['snippet']}",
             ]

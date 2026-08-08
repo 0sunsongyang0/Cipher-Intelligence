@@ -1,0 +1,20 @@
+id: nuclei-template-planner
+name: Nuclei 验证计划
+version: 10.4.7-cipher.1
+author: ProjectDiscovery
+description: 基于授权资产、模板标签和严重度生成限速 Nuclei 验证计划，不执行扫描。
+source: github
+sourceUrl: https://github.com/projectdiscovery/nuclei-templates
+license: MIT
+upstream: {release: v10.4.7, adapterVersion: 1}
+marketplace: {category: security-operations, tags: [Nuclei, Templates, Validation], pricing: enterprise, featured: true}
+permissions: {tools: [validation.prepare_nuclei_plan]}
+inputs:
+  required: [assets, authorizationConfirmed]
+  properties:
+    assets: {type: array, label: 已授权资产, description: 每行一个域名或 URL，必须在测试授权范围内, itemType: string}
+    severities: {type: array, label: 严重度, default: [critical, high], itemType: string}
+    tags: {type: array, label: 模板标签, itemType: string}
+    rateLimit: {type: number, label: 每秒请求上限, default: 10}
+    authorizationConfirmed: {type: boolean, label: 已确认拥有资产测试授权, default: false}
+limits: {maxItems: 100, timeoutSeconds: 10}

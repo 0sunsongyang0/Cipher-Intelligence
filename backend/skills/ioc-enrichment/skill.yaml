@@ -1,0 +1,30 @@
+id: ioc-enrichment
+name: IOC 情报富化
+version: 1.0.0
+author: Cipher Intelligence
+source: github
+sourceUrl: https://github.com/MISP/misp-modules
+description: 汇总 IP、域名、URL 和哈希的外部情报，输出可审计的风险结论。
+marketplace:
+  category: threat-intelligence
+  tags:
+    - IOC
+    - VirusTotal
+    - MISP
+  pricing: included
+  featured: true
+inputs:
+  required:
+    - iocs
+  properties:
+    iocs:
+      type: array
+      label: IOC 列表
+      description: 每行一个 IP、域名、URL 或 SHA-256
+      itemType: string
+permissions:
+  tools:
+    - threat_intel.lookup_ioc
+limits:
+  maxTokens: 6000
+  timeoutSeconds: 120

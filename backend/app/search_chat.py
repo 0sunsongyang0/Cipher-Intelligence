@@ -1,7 +1,8 @@
 from collections.abc import AsyncIterator
 from typing import Any
 
-from app.deepseek import stream_chat_completion
+from app.deepseek import StreamUsage, stream_chat_completion
+from app.evidence import build_evidence_marker
 from app.prompt_config_store import get_effective_prompt
 from app.web_search import build_web_search_context, search_web
 
@@ -13,7 +14,8 @@ WEB_SEARCH_SYSTEM_INSTRUCTION = (
     "\u4e0d\u8981\u518d\u58f0\u79f0\u4f60\u65e0\u6cd5\u8054\u7f51\u3001\u4e0d\u80fd\u8bbf\u95ee\u5b9e\u65f6\u4fe1\u606f\uff0c"
     "\u6216\u8981\u6c42\u7528\u6237\u81ea\u5df1\u53bb\u641c\u7d22\u3002\n"
     "\u5982\u679c\u641c\u7d22\u7ed3\u679c\u4e0d\u8db3\uff0c\u5c31\u660e\u786e\u8bf4\u660e"
-    "\u201c\u5f53\u524d\u63d0\u4f9b\u7684\u641c\u7d22\u7ed3\u679c\u4e0d\u8db3\u4ee5\u652f\u6491\u66f4\u786e\u5b9a\u7684\u7ed3\u8bba\u201d\u3002"
+    "\u201c\u5f53\u524d\u63d0\u4f9b\u7684\u641c\u7d22\u7ed3\u679c\u4e0d\u8db3\u4ee5\u652f\u6491\u66f4\u786e\u5b9a\u7684\u7ed3\u8bba\u201d\u3002\n"
+    "\u5f15\u7528\u8054\u7f51\u641c\u7d22\u4e8b\u5b9e\u65f6\uff0c\u8bf7\u5728\u76f8\u5173\u53e5\u5b50\u540e\u4f7f\u7528 [W1]\u3001[W2] \u8fd9\u6837\u7684\u6765\u6e90\u7f16\u53f7\uff0c\u4e0d\u8981\u7f16\u9020\u4e0d\u5b58\u5728\u7684\u7f16\u53f7\u3002"
 )
 
 FORBIDDEN_WEB_SEARCH_DISCLAIMER_PATTERNS = (
@@ -54,15 +56,24 @@ def attach_block_to_messages(
 
 
 def apply_backend_system_prompt(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    existing_system_content = "\n\n".join(
+        str(message.get("content", "")).strip()
+        for message in messages
+        if str(message.get("role", "")).strip().lower() == "system"
+        and str(message.get("content", "")).strip()
+    )
     non_system_messages = [
         message
         for message in messages
         if str(message.get("role", "")).strip().lower() != "system"
     ]
     prompt = get_effective_prompt().strip()
-    if not prompt:
+    combined_prompt = "\n\n".join(
+        part for part in (prompt, existing_system_content) if part
+    )
+    if not combined_prompt:
         return non_system_messages
-    return [{"role": "system", "content": prompt}, *non_system_messages]
+    return [{"role": "system", "content": combined_prompt}, *non_system_messages]
 
 
 def apply_web_search_system_instruction(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -158,6 +169,7 @@ async def stream_search_chat(
     messages: list[dict[str, Any]],
     model: str,
     web_search: bool,
+    usage_tracker: StreamUsage | None = None,
 ) -> AsyncIterator[str]:
     effective_messages = [*messages]
     query = ""
@@ -168,6 +180,21 @@ async def stream_search_chat(
         results = await search_web(query)
         search_block = build_web_search_context(query, results)
         effective_messages = attach_block_to_messages(effective_messages, search_block)
+        evidence_marker = build_evidence_marker(
+            [
+                {
+                    "sourceType": "web",
+                    "citation": f"W{index}",
+                    "title": item["title"],
+                    "url": item["url"],
+                    "locator": f"\u8054\u7f51\u641c\u7d22\u7ed3\u679c {index}",
+                    "snippet": item["snippet"],
+                }
+                for index, item in enumerate(results, start=1)
+            ]
+        )
+        if evidence_marker:
+            yield evidence_marker
 
     effective_messages = apply_backend_system_prompt(effective_messages)
     if web_search:
@@ -175,7 +202,12 @@ async def stream_search_chat(
 
     if web_search:
         buffered_chunks: list[str] = []
-        async for chunk in stream_chat_completion(effective_messages, model=model):
+        upstream_stream = (
+            stream_chat_completion(effective_messages, model=model, usage_tracker=usage_tracker)
+            if usage_tracker is not None
+            else stream_chat_completion(effective_messages, model=model)
+        )
+        async for chunk in upstream_stream:
             buffered_chunks.append(chunk)
 
         reply = "".join(buffered_chunks)
@@ -187,5 +219,10 @@ async def stream_search_chat(
             yield chunk
         return
 
-    async for chunk in stream_chat_completion(effective_messages, model=model):
+    upstream_stream = (
+        stream_chat_completion(effective_messages, model=model, usage_tracker=usage_tracker)
+        if usage_tracker is not None
+        else stream_chat_completion(effective_messages, model=model)
+    )
+    async for chunk in upstream_stream:
         yield chunk

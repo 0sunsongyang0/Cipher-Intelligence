@@ -60,16 +60,23 @@ def _hidden_creation_flags() -> int:
 
 
 def _run_powershell_json(script: str) -> dict[str, object]:
-    completed = subprocess.run(
-        [*_powershell_prefix(), "-Command", script],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=20,
-        check=True,
-    )
+    try:
+        completed = subprocess.run(
+            [*_powershell_prefix(), "-Command", script],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+            check=True,
+        )
+    except FileNotFoundError:
+        # The admin console can run on Linux for local development even though
+        # service control is implemented with the Windows PowerShell scripts.
+        # Treat unavailable Windows inspection as an empty/stopped state so
+        # read-only overview endpoints remain usable instead of returning 500.
+        return {}
     payload = completed.stdout.strip() or "{}"
     return json.loads(payload)
 

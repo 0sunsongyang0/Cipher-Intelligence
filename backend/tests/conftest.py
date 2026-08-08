@@ -1,19 +1,24 @@
 import gc
 import os
 from pathlib import Path
+import tempfile
 import sys
 import time
 
 import pytest
 from fastapi.testclient import TestClient
-TEST_DATABASE_URL = "sqlite:///./backend/data/test.db"
-TEST_DATABASE_PATH = Path("backend/data/test.db")
+# Never inherit a developer's DATABASE_URL (including values loaded from .env).
+# Include the xdist worker id so parallel workers get independent SQLite files.
+worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+TEST_DATABASE_PATH = Path(tempfile.gettempdir()) / f"cipher-agent-test-{os.getpid()}-{worker_id}.db"
+TEST_DATABASE_URL = f"sqlite:///{TEST_DATABASE_PATH.as_posix()}"
 
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.auth import hash_password
+from app.config import settings
 from app.database import engine
 from app.database import SessionLocal
 from app.main import app
@@ -39,6 +44,16 @@ def _unlink_with_retry(path: Path) -> None:
 @pytest.fixture(autouse=True)
 def isolate_prompt_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr("app.prompt_config_store.PROMPT_CONFIG_PATH", tmp_path / "prompt-config.json")
+
+
+@pytest.fixture(autouse=True)
+def isolate_auth_provider_config(monkeypatch: pytest.MonkeyPatch):
+    """Keep test behavior independent from the developer's local .env file."""
+    monkeypatch.setattr(settings, "casdoor_enabled", False)
+    monkeypatch.setattr(settings, "casdoor_redirect_uri", "")
+    monkeypatch.setattr(settings, "casdoor_admin_redirect_uri", "")
+    monkeypatch.setattr(settings, "session_cookie_secure", False)
+    monkeypatch.setattr(settings, "smart_model_routing_enabled", False)
 
 
 @pytest.fixture()

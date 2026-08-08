@@ -10,6 +10,7 @@ from tempfile import mkdtemp
 import time
 from types import SimpleNamespace
 import zipfile
+import re
 
 import pytest
 import httpx
@@ -28,7 +29,9 @@ from app.database import SessionLocal
 from app.config import DEFAULT_CHAT_SYSTEM_PROMPT, settings
 from app.database import init_db
 from app.deepseek import (
+    StreamUsage,
     build_upstream_payload,
+    parse_chunk_content,
     resolve_upstream,
     stream_chat_completion,
 )
@@ -48,7 +51,7 @@ from app.routes.frontend import (
     router as frontend_router,
 )
 from app.routes.upload_zip import router as upload_zip_router
-from app.models import Conversation, Message, User
+from app.models import ChatRequestMetric, Conversation, Message, UsageLedgerEntry, User
 from app.zip_context_store import zip_context_store
 
 
@@ -79,6 +82,14 @@ def login(client) -> str:
     )
     assert response.status_code == 200
     return response.cookies[COOKIE_NAME]
+
+
+def assert_stream_body(response, expected: str) -> None:
+    """Assert application text while accepting transport control frames."""
+    assert response.status_code == 200
+    body = response.text.replace("\u001e__CIPHER_KEEPALIVE__\u001e", "")
+    body = re.sub(r"\u001e__CIPHER_EVIDENCE__:[^\u001e]*\u001e", "", body)
+    assert body == expected
 
 
 def login_legacy(client) -> str:
@@ -124,7 +135,7 @@ def get_owner_user_id(session_token: str) -> int:
 
 @pytest.fixture()
 def chat_client():
-    test_database_path = Path("backend/data/test.db")
+    test_database_path = Path(settings.database_url.removeprefix("sqlite:///"))
     engine.dispose()
     _unlink_with_retry(test_database_path)
     reset_failed_attempts()
@@ -634,7 +645,8 @@ async def test_stream_search_chat_injects_web_search_context(monkeypatch) -> Non
     ):
         chunks.append(chunk)
 
-    assert chunks == ["search-enabled"]
+    assert chunks[-1] == "search-enabled"
+    assert chunks[0].startswith("\u001e__CIPHER_EVIDENCE__:")
     assert captured["model"] == "deepseek-v4-flash"
     sent_messages = captured["messages"]
     assert isinstance(sent_messages, list)
@@ -678,7 +690,8 @@ async def test_stream_search_chat_adds_web_search_instruction_to_system_prompt(m
     ):
         chunks.append(chunk)
 
-    assert chunks == ["search-enabled"]
+    assert chunks[-1] == "search-enabled"
+    assert chunks[0].startswith("\u001e__CIPHER_EVIDENCE__:")
     sent_messages = captured["messages"]
     assert isinstance(sent_messages, list)
     assert sent_messages[0]["role"] == "system"
@@ -882,7 +895,10 @@ def test_chat_route_uses_web_search_stream_when_flag_enabled(chat_client, monkey
     async def fake_stream_search_chat(*, messages, model, web_search):
         assert web_search is True
         assert model == "deepseek-v4-flash"
-        assert messages == [{"role": "user", "content": "上海今天天气怎么样"}]
+        assert messages == [
+            {"role": "system", "content": DEFAULT_CHAT_SYSTEM_PROMPT},
+            {"role": "user", "content": "上海今天天气怎么样"},
+        ]
         yield "weather-search-ok"
 
     monkeypatch.setattr("app.routes.chat.stream_chat_completion", fail_if_plain_stream_used)
@@ -898,7 +914,7 @@ def test_chat_route_uses_web_search_stream_when_flag_enabled(chat_client, monkey
     )
 
     assert response.status_code == 200
-    assert response.text == "weather-search-ok"
+    assert_stream_body(response, "weather-search-ok")
 
 
 @pytest.mark.anyio
@@ -1044,6 +1060,42 @@ def test_build_upstream_payload_returns_plain_provider_payloads() -> None:
     assert claude_payload["model"] == "claude-opus-4-7"
     assert claude_payload["system"] == "Use web search"
     assert claude_payload["messages"] == [{"role": "user", "content": "hello"}]
+
+
+def test_stream_usage_captures_exact_provider_token_counts() -> None:
+    tracker = StreamUsage()
+    line = 'data: {"choices":[],"usage":{"prompt_tokens":321,"completion_tokens":45,"total_tokens":366}}'
+
+    assert parse_chunk_content(line, tracker) is None
+    assert tracker.is_exact is True
+    assert tracker.input_tokens == 321
+    assert tracker.output_tokens == 45
+
+
+def test_chat_ledger_prefers_exact_upstream_usage(chat_client, monkeypatch) -> None:
+    login(chat_client)
+
+    async def fake_stream_chat_completion(messages, model=None, usage_tracker=None):
+        del messages, model
+        usage_tracker.input_tokens = 123
+        usage_tracker.output_tokens = 17
+        usage_tracker.model_id = "deepseek-v4-flash"
+        yield "exact usage"
+
+    monkeypatch.setattr("app.routes.chat.stream_chat_completion", fake_stream_chat_completion)
+    response = chat_client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "count this"}]},
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        metric = db.query(ChatRequestMetric).order_by(ChatRequestMetric.id.desc()).first()
+        ledger = db.query(UsageLedgerEntry).order_by(UsageLedgerEntry.id.desc()).first()
+        assert metric.input_tokens == 123
+        assert metric.output_tokens == 17
+        assert ledger.input_tokens == 123
+        assert ledger.output_tokens == 17
 
 
 def test_upload_zip_stores_context_for_later_chat_use_and_overwrites_same_conversation(
@@ -1338,7 +1390,7 @@ def test_chat_allows_zip_context_for_openai_model(chat_client, monkeypatch) -> N
     )
 
     assert response.status_code == 200
-    assert response.text == "openai-ok"
+    assert_stream_body(response, "openai-ok")
 
 
 def test_chat_allows_zip_context_for_claude_model(chat_client, monkeypatch) -> None:
@@ -1381,7 +1433,7 @@ def test_chat_allows_zip_context_for_claude_model(chat_client, monkeypatch) -> N
     )
 
     assert response.status_code == 200
-    assert response.text == "claude-ok"
+    assert_stream_body(response, "claude-ok")
 
 
 def test_chat_reuses_stored_zip_images_for_openai_model(chat_client, monkeypatch) -> None:
@@ -1432,7 +1484,7 @@ def test_chat_reuses_stored_zip_images_for_openai_model(chat_client, monkeypatch
     )
 
     assert response.status_code == 200
-    assert response.text == "openai-zip-image-ok"
+    assert_stream_body(response, "openai-zip-image-ok")
 
 
 def test_chat_reuses_stored_zip_images_for_claude_model(chat_client, monkeypatch) -> None:
@@ -1486,7 +1538,7 @@ def test_chat_reuses_stored_zip_images_for_claude_model(chat_client, monkeypatch
     )
 
     assert response.status_code == 200
-    assert response.text == "claude-zip-image-ok"
+    assert_stream_body(response, "claude-zip-image-ok")
 
 
 def test_chat_skips_unreadable_zip_images_for_claude_model(chat_client, monkeypatch) -> None:
@@ -1539,7 +1591,7 @@ def test_chat_skips_unreadable_zip_images_for_claude_model(chat_client, monkeypa
     )
 
     assert response.status_code == 200
-    assert response.text == "claude-zip-image-fallback-ok"
+    assert_stream_body(response, "claude-zip-image-fallback-ok")
 
 
 def test_chat_reuses_eagerly_extracted_zip_image_ocr_for_deepseek_follow_up(
@@ -1589,7 +1641,7 @@ def test_chat_reuses_eagerly_extracted_zip_image_ocr_for_deepseek_follow_up(
     )
 
     assert response.status_code == 200
-    assert response.text == "deepseek-zip-image-ok"
+    assert_stream_body(response, "deepseek-zip-image-ok")
 
 
 def test_chat_rejects_missing_or_expired_zip_context_for_current_session(chat_client) -> None:
@@ -1699,7 +1751,10 @@ def test_primary_app_mounts_server_chat_route(client, monkeypatch) -> None:
 
     async def fake_stream_chat_completion(messages, model=None):
         assert model == "deepseek-v4-flash"
-        assert messages == [{"role": "user", "content": "ping"}]
+        assert messages == [
+            {"role": "system", "content": DEFAULT_CHAT_SYSTEM_PROMPT},
+            {"role": "user", "content": "ping"},
+        ]
         yield "ok"
 
     monkeypatch.setattr(
@@ -1713,7 +1768,7 @@ def test_primary_app_mounts_server_chat_route(client, monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.text == "\u001e__CIPHER_KEEPALIVE__\u001eok"
+    assert_stream_body(response, "ok")
 
 
 def test_chat_uses_saved_prompt_override(chat_client, monkeypatch, tmp_path) -> None:
@@ -1741,7 +1796,7 @@ def test_chat_uses_saved_prompt_override(chat_client, monkeypatch, tmp_path) -> 
     )
 
     assert response.status_code == 200
-    assert response.text == "override-ok"
+    assert_stream_body(response, "override-ok")
 
 
 @pytest.mark.parametrize("api_key", ["", "unset", "   "])
@@ -2515,7 +2570,7 @@ def test_chat_forwards_message_history_exactly_as_provided(chat_client, monkeypa
     )
 
     assert response.status_code == 200
-    assert response.text == "done"
+    assert_stream_body(response, "done")
 
 
 def test_chat_still_accepts_plain_json_without_files(chat_client, monkeypatch) -> None:
@@ -2540,7 +2595,7 @@ def test_chat_still_accepts_plain_json_without_files(chat_client, monkeypatch) -
     )
 
     assert response.status_code == 200
-    assert response.text == "plain-ok"
+    assert_stream_body(response, "plain-ok")
 
 
 def test_chat_persists_messages_to_owned_conversation(chat_client, monkeypatch) -> None:
@@ -2580,7 +2635,7 @@ def test_chat_persists_messages_to_owned_conversation(chat_client, monkeypatch) 
     )
 
     assert response.status_code == 200
-    assert response.text == "cloud reply"
+    assert_stream_body(response, "cloud reply")
 
     with SessionLocal() as db:
         stored_conversation = db.get(Conversation, conversation_id)
@@ -2723,7 +2778,7 @@ def test_chat_accepts_multipart_messages_with_text_attachment(chat_client, monke
     )
 
     assert response.status_code == 200
-    assert response.text == "ok"
+    assert_stream_body(response, "ok")
 
 
 def test_chat_includes_pdf_attachment_text_in_last_user_message(chat_client, monkeypatch) -> None:
@@ -2748,7 +2803,7 @@ def test_chat_includes_pdf_attachment_text_in_last_user_message(chat_client, mon
     )
 
     assert response.status_code == 200
-    assert response.text == "ok"
+    assert_stream_body(response, "ok")
 
 
 def test_chat_includes_docx_attachment_text_in_last_user_message(chat_client, monkeypatch) -> None:
@@ -2779,7 +2834,7 @@ def test_chat_includes_docx_attachment_text_in_last_user_message(chat_client, mo
     )
 
     assert response.status_code == 200
-    assert response.text == "ok"
+    assert_stream_body(response, "ok")
 
 
 def test_chat_includes_pptx_attachment_text_in_last_user_message(chat_client, monkeypatch) -> None:
@@ -2841,7 +2896,7 @@ def test_chat_includes_ppt_attachment_text_in_last_user_message(chat_client, mon
     )
 
     assert response.status_code == 200
-    assert response.text == "ok"
+    assert_stream_body(response, "ok")
 
 
 def test_chat_uses_native_vision_payload_for_chatgpt_image_attachments(
@@ -2889,7 +2944,7 @@ def test_chat_uses_native_vision_payload_for_chatgpt_image_attachments(
     )
 
     assert response.status_code == 200
-    assert response.text == "vision-ok"
+    assert_stream_body(response, "vision-ok")
 
 
 def test_chat_uses_native_vision_payload_for_claude_image_attachments(
@@ -2925,7 +2980,7 @@ def test_chat_uses_native_vision_payload_for_claude_image_attachments(
     )
 
     assert response.status_code == 200
-    assert response.text == "claude-vision-ok"
+    assert_stream_body(response, "claude-vision-ok")
 
 
 def test_chat_keeps_ocr_flow_for_deepseek_image_attachments(chat_client, monkeypatch) -> None:
@@ -2955,7 +3010,7 @@ def test_chat_keeps_ocr_flow_for_deepseek_image_attachments(chat_client, monkeyp
     )
 
     assert response.status_code == 200
-    assert response.text == "deepseek-ok"
+    assert_stream_body(response, "deepseek-ok")
 
 
 def test_chat_rejects_image_when_ocr_extracts_no_text(chat_client, monkeypatch) -> None:
@@ -3061,8 +3116,8 @@ def test_chat_surfaces_synchronous_upstream_errors_for_authenticated_session(
 
     assert response.status_code == 502
     assert response.json() == {"detail": "DeepSeek request setup failed"}
-
-
-
-
-
+    with SessionLocal() as db:
+        metric = db.execute(select(ChatRequestMetric)).scalar_one()
+        assert metric.status == "error"
+        assert metric.model_id == "deepseek-v4-flash"
+        assert metric.error_message == "DeepSeek request setup failed"

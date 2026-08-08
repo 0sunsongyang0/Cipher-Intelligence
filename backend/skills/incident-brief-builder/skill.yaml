@@ -1,0 +1,17 @@
+id: incident-brief-builder
+name: 安全事件简报
+version: 1.0.0
+author: Cipher Intelligence
+description: 将 Case 摘要、严重度、IOC 和已采取动作组装为管理层与分析师双层简报。
+source: builtin
+marketplace: {category: incident-response, tags: [Case, Report, Handoff], pricing: professional, featured: true}
+permissions: {tools: [case.build_brief]}
+inputs:
+  required: [title, severity]
+  properties:
+    title: {type: string, label: 事件标题}
+    severity: {type: string, label: 严重度, default: unknown}
+    summary: {type: string, label: 调查摘要}
+    indicators: {type: array, label: 关键 IOC, itemType: string}
+    actions: {type: array, label: 已采取动作, itemType: string}
+limits: {maxItems: 250, timeoutSeconds: 10}

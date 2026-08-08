@@ -1,0 +1,24 @@
+id: cape-to-stix
+name: CAPE 报告转 STIX
+version: 1.0.0
+author: Cipher Intelligence
+description: 将 CAPE 报告中的 IP、域名、URL 与哈希转换为 STIX 2.1 Bundle，便于进入情报平台和图谱。
+source: github
+sourceUrl: https://github.com/idaholab/cape2stix
+marketplace:
+  category: malware-analysis
+  tags: [CAPE, STIX, CTI]
+  pricing: included
+  featured: true
+permissions:
+  tools: [report.convert_stix]
+inputs:
+  required: [report]
+  properties:
+    report:
+      type: object
+      label: CAPE 报告
+      description: 可从 Case 中自动带入，也可粘贴 JSON
+limits:
+  timeoutSeconds: 15
+  maxItems: 250

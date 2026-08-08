@@ -1,0 +1,4 @@
+interface:
+  display_name: "证据完整性检查"
+  short_description: "检查案件证据审核、哈希、重复与签名就绪状态并输出缺口"
+  default_prompt: "Use $evidence-integrity-checker to assess whether case evidence is ready for signing."

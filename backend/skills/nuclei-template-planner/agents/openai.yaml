@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nuclei 验证计划"
+  short_description: "基于授权资产、严重度与标签生成安全限速的漏洞验证计划"
+  default_prompt: "Use $nuclei-template-planner to prepare a rate-limited validation plan for authorized assets."

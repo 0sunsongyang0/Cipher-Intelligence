@@ -1,0 +1,4 @@
+interface:
+  display_name: "安全事件简报"
+  short_description: "将调查 Case 生成管理层摘要与分析师交接简报文本"
+  default_prompt: "Use $incident-brief-builder to create an executive and analyst incident brief."
