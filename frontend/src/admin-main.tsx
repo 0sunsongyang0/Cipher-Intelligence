@@ -7,7 +7,7 @@ import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename="/admin">
       <ThemeProvider><AdminApp /></ThemeProvider>
     </BrowserRouter>
   </React.StrictMode>
