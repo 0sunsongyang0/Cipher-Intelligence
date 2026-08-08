@@ -3,6 +3,25 @@ import * as api from "./api";
 import type { OutboundChatMessage } from "../types";
 
 describe("api auth helpers", () => {
+  it("loads the public Casdoor provider configuration", async () => {
+    const config = {
+      enabled: true,
+      provider: "casdoor" as const,
+      displayName: "Cipher SSO"
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(config), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    await expect(api.getCasdoorAuthConfig()).resolves.toEqual(config);
+    expect(fetchSpy).toHaveBeenCalledWith("/api/auth/casdoor/config", {
+      credentials: "include"
+    });
+  });
+
   it("returns an anonymous session payload when the session endpoint returns 401", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 401 })
@@ -110,6 +129,201 @@ describe("api auth helpers", () => {
     );
 
     await expect(api.login({ username: "alice", password: "wrong" })).rejects.toThrow("bad password");
+  });
+
+  it("patches account profile changes without sending a mutable username", async () => {
+    const updatedUser = {
+      id: 1,
+      username: "alice",
+      displayName: "Threat Hunter",
+      avatarUrl: null,
+      isAdmin: false
+    };
+    const overview = {
+      user: updatedUser,
+      workspaceAvatarUrl: null,
+      identityAvatarUrl: null,
+      identity: {
+        source: "casdoor" as const,
+        providerName: "Cipher SSO",
+        email: "hunter@example.test",
+        emailVerified: false,
+        connectedAccounts: [],
+        mfaEnabled: false,
+        passwordEnabled: true,
+        lastSignInAt: null,
+        lastSyncedAt: "2026-08-06T08:00:00Z",
+        syncStatus: "current" as const,
+        syncAvailable: true,
+        managementUrl: "https://login.example.test/account"
+      }
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(overview), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    await expect(
+      api.updateAccountProfile({
+        displayName: "Threat Hunter",
+        email: "hunter@example.test",
+        removeAvatar: true
+      })
+    ).resolves.toEqual(overview);
+
+    expect(fetchSpy).toHaveBeenCalledWith("/api/account/profile", {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        displayName: "Threat Hunter",
+        email: "hunter@example.test",
+        removeAvatar: true
+      })
+    });
+  });
+
+  it("reloads the account overview when an older profile endpoint returns a flat user", async () => {
+    const legacyUser = {
+      id: 1,
+      username: "alice",
+      displayName: "Threat Hunter",
+      avatarUrl: null,
+      isAdmin: false
+    };
+    const overview = {
+      user: legacyUser,
+      workspaceAvatarUrl: null,
+      identityAvatarUrl: null,
+      identity: {
+        source: "casdoor" as const,
+        providerName: "Cipher SSO",
+        email: "hunter@example.test",
+        emailVerified: false,
+        connectedAccounts: [],
+        mfaEnabled: false,
+        passwordEnabled: true,
+        lastSignInAt: null,
+        lastSyncedAt: "2026-08-06T08:00:00Z",
+        syncStatus: "current" as const,
+        syncAvailable: true,
+        managementUrl: "https://login.example.test/account"
+      }
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(legacyUser), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(overview), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
+      );
+
+    await expect(
+      api.updateAccountProfile({ displayName: "Threat Hunter" })
+    ).resolves.toEqual(overview);
+
+    expect(fetchSpy).toHaveBeenNthCalledWith(1, "/api/account/profile", {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName: "Threat Hunter" })
+    });
+    expect(fetchSpy).toHaveBeenNthCalledWith(2, "/api/account", {
+      credentials: "include"
+    });
+  });
+
+  it("loads the synchronized account overview", async () => {
+    const overview = {
+      user: { id: 1, username: "alice", displayName: "Alice", avatarUrl: null, isAdmin: false },
+      workspaceAvatarUrl: null,
+      identityAvatarUrl: null,
+      identity: {
+        source: "casdoor",
+        providerName: "Cipher SSO",
+        email: "alice@example.test",
+        emailVerified: true,
+        connectedAccounts: [{ provider: "github", label: "GitHub" }],
+        mfaEnabled: true,
+        passwordEnabled: true,
+        lastSignInAt: null,
+        lastSyncedAt: "2026-08-06T08:00:00Z",
+        syncStatus: "current",
+        syncAvailable: true,
+        managementUrl: "https://login.example.test/account"
+      }
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(overview), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    await expect(api.getAccountOverview()).resolves.toEqual(overview);
+    expect(fetchSpy).toHaveBeenCalledWith("/api/account", { credentials: "include" });
+  });
+
+  it("requests a fresh Casdoor account sync", async () => {
+    const overview = {
+      user: { id: 1, username: "alice", displayName: "Alice", avatarUrl: null, isAdmin: false },
+      workspaceAvatarUrl: null,
+      identityAvatarUrl: null,
+      identity: {
+        source: "casdoor",
+        providerName: "Cipher SSO",
+        email: "alice@example.test",
+        emailVerified: true,
+        connectedAccounts: [],
+        mfaEnabled: false,
+        passwordEnabled: true,
+        lastSignInAt: null,
+        lastSyncedAt: "2026-08-06T08:00:00Z",
+        syncStatus: "current",
+        syncAvailable: true,
+        managementUrl: "https://login.example.test/account"
+      }
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(overview), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    await expect(api.syncAccount()).resolves.toEqual(overview);
+    expect(fetchSpy).toHaveBeenCalledWith("/api/account/sync", {
+      method: "POST",
+      credentials: "include"
+    });
+  });
+
+  it("requests an account email verification message", async () => {
+    const result = {
+      email: "alice@example.test",
+      sent: true,
+      message: "验证邮件已发送，请查看邮箱。"
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    await expect(api.sendAccountEmailVerification()).resolves.toEqual(result);
+    expect(fetchSpy).toHaveBeenCalledWith("/api/account/email-verification", {
+      method: "POST",
+      credentials: "include"
+    });
   });
 
   it("posts to the logout endpoint with credentials", async () => {
@@ -231,6 +445,37 @@ describe("api auth helpers", () => {
     );
 
     await expect(api.controlAdminService("tunnel", "stop")).rejects.toThrow("service control failed");
+  });
+
+  it("maps an empty 503 response to a chat-service diagnostic", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
+
+    await expect(api.getAdminOverview()).rejects.toThrow(
+      "聊天服务暂时不可用，请检查后端是否启动，以及 `backend/.env` 里的模型密钥是否已配置。"
+    );
+  });
+
+  it("loads admin observability metrics with credentials", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        days: 7,
+        requestSuccessRate: 99,
+        averageResponseTimeMs: 120,
+        modelFailureRate: 1,
+        tokenUsage: { input: 10, output: 20, total: 30 },
+        capeTaskAverageDurationMs: 2500,
+        activeUsers: 3,
+        events: 12
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    const payload = await api.getAdminObservability(7);
+
+    expect(fetchSpy).toHaveBeenCalledWith("/api/admin/observability?days=7", { credentials: "include" });
+    expect(payload.tokenUsage.total).toBe(30);
   });
 
   it("posts zip cache clear requests with credentials", async () => {
@@ -969,3 +1214,134 @@ describe("uploadZip", () => {
   });
 });
 
+describe("CAPE API", () => {
+  it("submits a sample file to the CAPE route", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ taskId: 99, status: "submitted", reusedExistingTask: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      })
+    );
+
+    await expect(
+      api.submitCapeSample(new File(["MZ"], "payload.exe", { type: "application/octet-stream" }), {
+        machine: "win10",
+        tags: "trojan,cape"
+      })
+    ).resolves.toEqual({ taskId: 99, status: "submitted", reusedExistingTask: true });
+
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe("/api/cape/submit?machine=win10&tags=trojan%2Ccape");
+  });
+
+  it("loads CAPE task status", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          taskId: 99,
+          status: "reported",
+          completed: true,
+          score: 8.2,
+          targetFilename: "payload.exe",
+          machine: "win10"
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(api.getCapeTaskStatus(99)).resolves.toMatchObject({
+      taskId: 99,
+      completed: true
+    });
+  });
+
+  it("loads CAPE task summary", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          taskId: 99,
+          status: "reported",
+          score: 8.2,
+          submittedFilename: "payload.exe",
+          sha256: "abc",
+          iocs: { domains: ["evil.example"], ips: ["8.8.8.8"], urls: [] },
+          tactics: [],
+          droppedFiles: [],
+          signatures: []
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(api.getCapeTaskSummary(99)).resolves.toMatchObject({
+      taskId: 99,
+      iocs: { domains: ["evil.example"] }
+    });
+  });
+
+  it("throws a typed CAPE report wait error while the report is still being generated", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "Task is still being analyzed" }), {
+        status: 409,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      })
+    );
+
+    await expect(api.getCapeTaskSummary(99)).rejects.toThrow(api.CapeReportNotReadyError);
+  });
+
+  it("creates a chat-native CAPE case for a conversation", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 7,
+          conversationId: 1,
+          taskId: 99,
+          sampleName: "payload.exe",
+          status: "submitted",
+          completed: false,
+          score: null,
+          targetFilename: null,
+          machine: null,
+          sha256: null,
+          reusedExistingTask: false,
+          summary: null,
+          createdAt: "2026-07-20T00:00:00.000Z",
+          updatedAt: "2026-07-20T00:00:00.000Z"
+        }),
+        {
+          status: 201,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(
+      api.createCapeCase(new File(["MZ"], "payload.exe", { type: "application/octet-stream" }), {
+        conversationId: "1"
+      })
+    ).resolves.toMatchObject({
+      id: 7,
+      conversationId: 1,
+      taskId: 99,
+      sampleName: "payload.exe"
+    });
+
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe("/api/cape/cases?conversationId=1");
+  });
+});

@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { AuroraBackground } from "./components/AuroraBackground";
+import { CasdoorEmbeddedLogin } from "./components/CasdoorEmbeddedLogin";
+import { ThemeToggle } from "./components/ThemeToggle";
 import { useFrontendVersionRefresh } from "./hooks/useFrontendVersionRefresh";
-import { checkSession, login, logout } from "./lib/api";
+import { checkSession, getCasdoorAuthConfig, logout } from "./lib/api";
 import { AdminPage } from "./pages/AdminPage";
-import type { AuthUser, SessionStatus } from "./types";
+import type { AuthUser, CasdoorAuthConfig, SessionStatus } from "./types";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) {
@@ -22,20 +24,19 @@ function isAuthenticatedAdminSession(
 
 function AdminLoginPage({
   error,
-  isSubmitting,
-  onSubmit,
+  casdoor,
+  onCasdoorAuthenticated,
+  onCasdoorError,
 }: {
   error: string | null;
-  isSubmitting: boolean;
-  onSubmit: (credentials: { username: string; password: string }) => Promise<void> | void;
+  casdoor: CasdoorAuthConfig;
+  onCasdoorAuthenticated: () => Promise<void> | void;
+  onCasdoorError: (message: string) => void;
 }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const disabled = isSubmitting || username.trim().length === 0 || password.trim().length === 0;
-
   return (
     <main className="auth-shell aurora-shell">
       <AuroraBackground testId="aurora-background" />
+      <ThemeToggle className="theme-toggle--auth" />
       <section className="auth-shell__frame">
         <section className="auth-panel glass-panel-card">
           <div className="auth-panel__brand">
@@ -48,56 +49,26 @@ function AdminLoginPage({
           <div className="auth-panel__intro">
             <p className="eyebrow">Admin Access</p>
             <h1>进入管理后台</h1>
-            <p className="lead">使用管理员账号登录后继续管理服务、模型、文件和隧道。</p>
+            <p className="lead">使用统一身份认证登录后，继续管理系统服务、模型和身份权限。</p>
           </div>
 
-          <form
-            className="login-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!disabled) {
-                void onSubmit({ username, password });
-              }
-            }}
-          >
-            <div className="field">
-              <label htmlFor="admin-username">用户名</label>
-              <input
-                id="admin-username"
-                name="username"
-                type="text"
-                autoComplete="username"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                placeholder="请输入管理员用户名"
-                disabled={isSubmitting}
-              />
-            </div>
+          {casdoor.enabled ? (
+            <CasdoorEmbeddedLogin
+              displayName={casdoor.displayName}
+              onAuthenticated={onCasdoorAuthenticated}
+              onError={onCasdoorError}
+            />
+          ) : (
+            <p className="status-banner status-banner--error" role="alert">
+              统一身份认证当前不可用，请检查 Casdoor 配置。
+            </p>
+          )}
 
-            <div className="field">
-              <label htmlFor="admin-password">密码</label>
-              <input
-                id="admin-password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="请输入管理员密码"
-                disabled={isSubmitting}
-              />
-            </div>
-
-            {error ? (
-              <p className="status-banner status-banner--error" role="alert">
-                {error}
-              </p>
-            ) : null}
-
-            <button className="primary-button primary-button--aurora" type="submit" disabled={disabled}>
-              {isSubmitting ? "登录中..." : "进入后台"}
-            </button>
-          </form>
+          {error ? (
+            <p className="status-banner status-banner--error" role="alert">
+              {error}
+            </p>
+          ) : null}
         </section>
       </section>
     </main>
@@ -106,12 +77,18 @@ function AdminLoginPage({
 
 export function AdminApp() {
   useFrontendVersionRefresh();
+  const location = useLocation();
 
   const [sessionKnown, setSessionKnown] = useState(false);
   const [sessionAuthenticated, setSessionAuthenticated] = useState(false);
   const [viewer, setViewer] = useState<AuthUser | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [casdoor, setCasdoor] = useState<CasdoorAuthConfig>({
+    enabled: false,
+    provider: "casdoor",
+    displayName: "Casdoor",
+    managementUrl: "",
+  });
   const authenticated = sessionAuthenticated && viewer !== null && viewer.isAdmin;
 
   function applySession(session: SessionStatus) {
@@ -122,20 +99,30 @@ export function AdminApp() {
   function rejectAdminSession() {
     setSessionAuthenticated(false);
     setViewer(null);
-    setError("Admin access required");
+    setError("当前 Casdoor 账号没有 Cipher 管理权限。");
   }
 
   useEffect(() => {
     let active = true;
 
     async function restoreSession() {
+      const casdoorError = new URLSearchParams(location.search).get("casdoor_error");
       try {
         const session = await checkSession();
         if (!active) {
           return;
         }
 
-        if (!isAuthenticatedAdminSession(session)) {
+        if (!session.authenticated || session.user === null) {
+          setSessionAuthenticated(false);
+          setViewer(null);
+          if (casdoorError) {
+            setError(casdoorError);
+          }
+          return;
+        }
+
+        if (!session.user.isAdmin) {
           rejectAdminSession();
           return;
         }
@@ -163,12 +150,29 @@ export function AdminApp() {
     };
   }, []);
 
-  async function handleLogin(credentials: { username: string; password: string }) {
+  useEffect(() => {
+    let active = true;
+
+    getCasdoorAuthConfig()
+      .then((config) => {
+        if (active) {
+          setCasdoor(config);
+        }
+      })
+      .catch(() => {
+        setError("无法读取 Casdoor 配置，请检查身份服务是否可用。");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function handleCasdoorAuthenticated() {
     setError(null);
-    setIsSubmitting(true);
 
     try {
-      const session = await login(credentials);
+      const session = await checkSession();
       if (!isAuthenticatedAdminSession(session)) {
         rejectAdminSession();
         return;
@@ -179,8 +183,6 @@ export function AdminApp() {
       setSessionAuthenticated(false);
       setViewer(null);
       setError(getErrorMessage(nextError));
-    } finally {
-      setIsSubmitting(false);
     }
   }
 
@@ -214,9 +216,18 @@ export function AdminApp() {
         path="/*"
         element={
           authenticated ? (
-            <AdminPage onLogout={handleLogout} sessionError={error} />
+            <AdminPage
+              onLogout={handleLogout}
+              sessionError={error}
+              casdoorManagementUrl={casdoor.managementUrl}
+            />
           ) : (
-            <AdminLoginPage error={error} isSubmitting={isSubmitting} onSubmit={handleLogin} />
+            <AdminLoginPage
+              error={error}
+              casdoor={casdoor}
+              onCasdoorAuthenticated={handleCasdoorAuthenticated}
+              onCasdoorError={setError}
+            />
           )
         }
       />

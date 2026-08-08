@@ -1,13 +1,33 @@
-import { IconArrowLeft, IconRefresh } from "@tabler/icons-react";
+import {
+  IconActivityHeartbeat,
+  IconArrowLeft,
+  IconBrain,
+  IconChartBar,
+  IconChecklist,
+  IconFileAnalytics,
+  IconLayoutDashboard,
+  IconRefresh,
+  IconServer,
+  IconSettingsAutomation,
+  IconShieldLock,
+  IconShieldSearch
+} from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
 import { AuroraBackground } from "../components/AuroraBackground";
+import { AdminCapePanel } from "../components/admin/AdminCapePanel";
+import { AdminEvaluationPanel } from "../components/admin/AdminEvaluationPanel";
+import { CasdoorManagementPanel } from "../components/admin/CasdoorManagementPanel";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { AdminFilesPanel } from "../components/admin/AdminFilesPanel";
-import { InviteCodesPanel } from "../components/admin/InviteCodesPanel";
 import { AdminModelsPanel } from "../components/admin/AdminModelsPanel";
+import { AdminObservabilityPanel } from "../components/admin/AdminObservabilityPanel";
 import { AdminOverview } from "../components/admin/AdminOverview";
 import { AdminPromptPanel } from "../components/admin/AdminPromptPanel";
+import { AdminQualityPanel } from "../components/admin/AdminQualityPanel";
+import { AdminSkillsPanel } from "../components/admin/AdminSkillsPanel";
+import { AdminAnalysisTemplatesPanel } from "../components/admin/AdminAnalysisTemplatesPanel";
 import {
   clearAdminFileCache,
   controlAdminService,
@@ -18,7 +38,7 @@ import {
 } from "../lib/api";
 import type { AdminOverview as AdminOverviewData, AdminPrompt } from "../types";
 
-const ADMIN_SECTIONS = ["services", "models", "files", "prompt", "invites"] as const;
+const ADMIN_SECTIONS = ["services", "models", "quality", "evaluations", "observability", "files", "cape", "skills", "templates", "prompt", "identity"] as const;
 type AdminSection = "overview" | (typeof ADMIN_SECTIONS)[number];
 
 function getActiveSection(pathname: string): AdminSection {
@@ -30,14 +50,28 @@ function getActiveSection(pathname: string): AdminSection {
   if (lastSegment === "models") {
     return "models";
   }
+  if (lastSegment === "quality") {
+    return "quality";
+  }
+  if (lastSegment === "evaluations") {
+    return "evaluations";
+  }
+  if (lastSegment === "observability") {
+    return "observability";
+  }
   if (lastSegment === "files") {
     return "files";
   }
+  if (lastSegment === "cape") {
+    return "cape";
+  }
+  if (lastSegment === "skills") return "skills";
+  if (lastSegment === "templates") return "templates";
   if (lastSegment === "prompt") {
     return "prompt";
   }
-  if (lastSegment === "invites") {
-    return "invites";
+  if (lastSegment === "identity") {
+    return "identity";
   }
   return "overview";
 }
@@ -63,10 +97,12 @@ function getAdminRootPath(pathname: string): string {
 
 export function AdminPage({
   onLogout,
-  sessionError
+  sessionError,
+  casdoorManagementUrl = ""
 }: {
   onLogout: () => Promise<void> | void;
   sessionError?: string | null;
+  casdoorManagementUrl?: string;
 }) {
   const { pathname } = useLocation();
   const section = getActiveSection(pathname);
@@ -90,14 +126,20 @@ export function AdminPage({
     tunnel: "Cloudflare 隧道"
   } as const;
 
-  const navItems = useMemo<Array<{ to: string; label: string; key: AdminSection }>>(
+  const navItems = useMemo<Array<{ to: string; label: string; key: AdminSection; icon: typeof IconServer }>>(
     () => [
-      { to: "/", label: "总览", key: "overview" },
-      { to: "/services", label: "服务", key: "services" },
-      { to: "/models", label: "模型", key: "models" },
-      { to: "/files", label: "文件", key: "files" },
-      { to: "/prompt", label: "系统提示词", key: "prompt" },
-      { to: "/invites", label: "邀请码", key: "invites" }
+      { to: "/", label: "总览", key: "overview", icon: IconLayoutDashboard },
+      { to: "/services", label: "服务", key: "services", icon: IconServer },
+      { to: "/models", label: "模型", key: "models", icon: IconBrain },
+      { to: "/quality", label: "质量", key: "quality", icon: IconChartBar },
+      { to: "/evaluations", label: "评测中心", key: "evaluations", icon: IconChecklist },
+      { to: "/observability", label: "可观测性", key: "observability", icon: IconActivityHeartbeat },
+      { to: "/files", label: "文件", key: "files", icon: IconFileAnalytics },
+      { to: "/cape", label: "CAPE", key: "cape", icon: IconShieldSearch },
+      { to: "/skills", label: "Skill Store", key: "skills", icon: IconSettingsAutomation },
+      { to: "/templates", label: "分析模板", key: "templates", icon: IconShieldSearch },
+      { to: "/prompt", label: "系统提示词", key: "prompt", icon: IconSettingsAutomation },
+      { to: "/identity", label: "身份管理", key: "identity", icon: IconShieldLock }
     ],
     []
   );
@@ -230,8 +272,8 @@ export function AdminPage({
   }
 
   function renderSection() {
-    if (section === "invites") {
-      return <InviteCodesPanel />;
+    if (section === "identity") {
+      return <CasdoorManagementPanel managementUrl={casdoorManagementUrl} />;
     }
 
     if (loading) {
@@ -256,9 +298,27 @@ export function AdminPage({
       return <AdminModelsPanel providers={overview.models.providers} />;
     }
 
+    if (section === "quality") {
+      return <AdminQualityPanel />;
+    }
+
+    if (section === "evaluations") {
+      return <AdminEvaluationPanel />;
+    }
+
+    if (section === "observability") {
+      return <AdminObservabilityPanel />;
+    }
+
     if (section === "files") {
       return <AdminFilesPanel files={overview.files} clearing={clearingCache} onClear={handleClearCache} />;
     }
+
+    if (section === "cape") {
+      return <AdminCapePanel />;
+    }
+    if (section === "skills") return <AdminSkillsPanel />;
+    if (section === "templates") return <AdminAnalysisTemplatesPanel />;
 
     if (section === "prompt") {
       if (promptLoading && !promptData) {
@@ -307,9 +367,9 @@ export function AdminPage({
         <aside className="admin-console__sidebar glass-panel-card">
           <div className="admin-console__brand">
             <span className="brand-mark">Cipher Admin</span>
-            <p className="eyebrow">独立管理入口</p>
-            <h1>后端管理</h1>
-            <p className="lead">这个入口和聊天前台分离，后续可以独立挂到 `admin` 二级域名。</p>
+            <p className="eyebrow">指挥舱控制台</p>
+            <h1>系统管理</h1>
+            <p className="lead">集中检查服务、模型、样本情报与访问策略。</p>
           </div>
 
           <nav className="admin-console__nav" aria-label="后台导航">
@@ -322,12 +382,14 @@ export function AdminPage({
                   `admin-console__nav-link${isActive ? " admin-console__nav-link--active" : ""}`
                 }
               >
+                <item.icon size={17} stroke={1.8} aria-hidden="true" />
                 {item.label}
               </NavLink>
             ))}
           </nav>
 
           <div className="admin-console__sidebar-actions">
+            <ThemeToggle className="theme-toggle--admin" />
             <button type="button" className="secondary-button" onClick={() => void refreshOverview()}>
               <IconRefresh size={16} stroke={1.8} aria-hidden="true" />
               刷新状态
@@ -343,14 +405,18 @@ export function AdminPage({
           </div>
         </aside>
 
-        <section className="admin-console__content">
-          {activeError ? (
+        <section
+          className={`admin-console__content${
+            section === "identity" ? " admin-console__content--identity" : ""
+          }`}
+        >
+          {section !== "identity" && activeError ? (
             <p className="status-banner status-banner--error" role="alert">
               {activeError}
             </p>
           ) : null}
 
-          {notice ? (
+          {section !== "identity" && notice ? (
             <p className="admin-notice-banner" role="status">
               {notice}
             </p>

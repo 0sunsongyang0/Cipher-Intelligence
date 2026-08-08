@@ -64,7 +64,7 @@ export function PromptComposer({
       </div>
       <div className="prompt-composer__footer">
         <p className="prompt-composer__hint">
-          Press Enter to send to DeepSeek, Shift+Enter for a new line.
+          Press Enter to send to Cipher, Shift+Enter for a new line.
         </p>
       </div>
     </form>

@@ -6,7 +6,8 @@ from starlette.routing import Match
 
 router = APIRouter(tags=["admin-frontend"], include_in_schema=False)
 
-FRONTEND_DIST_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+FRONTEND_ROOT_DIR = Path(__file__).resolve().parents[3] / "frontend"
+FRONTEND_DIST_DIR = FRONTEND_ROOT_DIR / "dist"
 ADMIN_FRONTEND_INDEX_PATH = FRONTEND_DIST_DIR / "admin.html"
 FRONTEND_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
 SPA_SHELL_HEADERS = {

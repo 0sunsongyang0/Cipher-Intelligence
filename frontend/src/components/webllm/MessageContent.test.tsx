@@ -124,6 +124,25 @@ x(t) = \sum_{k=-\infty}^{\infty} C_k e^{j k \omega_0 t}, \quad \omega_0 = \frac{
     expect(document.querySelectorAll('[data-mml-node="merror"]')).toHaveLength(0);
   });
 
+  it("keeps malformed YARA display math readable without inline-code decoration", async () => {
+    vi.stubEnv("MODE", "production");
+    import.meta.env.MODE = "production";
+
+    render(
+      <MessageContent
+        content={`$$\nrule CAPE_Case6_WeixinSVG_ExactHash\n{\n  meta:\n    rule_id = "CAPE-CASE-6-HASH"\n  condition:\n    hash.sha256(0, filesize) == "f20dacc0227b6c72b0ed70e49aab2842b71ef160c126bf141c33facaa19a3f5f"\n}\n$$`}
+      />
+    );
+
+    const script = document.querySelector<HTMLScriptElement>('script[data-bomb-mathjax="true"]');
+    script?.dispatchEvent(new Event("error"));
+
+    await waitFor(() => expect(document.querySelector(".bomb-shell__math-fallback")).not.toBeNull());
+    expect(document.querySelector(".bomb-shell__math-fallback")?.textContent).toContain(
+      "rule CAPE_Case6_WeixinSVG_ExactHash"
+    );
+  });
+
   it("normalizes dangling MathJax delimiters so stray markers do not render in red", () => {
     render(
       <MessageContent

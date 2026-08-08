@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  cacheDir: resolve(__dirname, ".vite-cache"),
   plugins: [
     react(),
     legacy({
@@ -29,6 +30,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    setupFiles: "./src/test/setup.ts"
+    setupFiles: "./src/test/setup.ts",
+    exclude: ["e2e/**", "node_modules/**"]
   }
 });

@@ -1,240 +1,100 @@
-import { useState, type FormEvent } from "react";
-import { AuroraBackground } from "../components/AuroraBackground";
+import {
+  IconActivity,
+  IconBinaryTree2,
+  IconShieldCheck,
+} from "@tabler/icons-react";
+import { useState } from "react";
 
-export type AuthMode = "login" | "register";
-
-type LoginCredentials = {
-  username: string;
-  password: string;
-};
-
-type RegisterCredentials = LoginCredentials & {
-  confirmPassword: string;
-  inviteCode: string;
-};
+import { CasdoorEmbeddedLogin } from "../components/CasdoorEmbeddedLogin";
+import { GradientWaves } from "../components/GradientWaves";
+import { ThemeToggle } from "../components/ThemeToggle";
+import cipherLogo from "../assets/cipher-mark.svg";
+import { useTheme } from "../theme";
 
 type LoginPageProps = {
-  mode: AuthMode;
   error: string | null;
-  isSubmitting: boolean;
-  onModeChange: (mode: AuthMode) => void;
-  onLogin: (payload: LoginCredentials) => Promise<void> | void;
-  onRegister: (payload: RegisterCredentials) => Promise<void> | void;
+  casdoorEnabled?: boolean;
+  casdoorDisplayName?: string;
+  onCasdoorAuthenticated: () => Promise<void> | void;
+  onCasdoorError: (message: string) => void;
 };
 
-const COPY = {
-  status: "网络安全·AI Agent",
-  eyebrow: "访问验证",
-  title: "进入聊天界面",
-  lead: "使用账号登录，或凭邀请码创建新账号后进入你的专属网络安全对话空间。",
-  loginTab: "登录",
-  registerTab: "注册",
-  usernameLabel: "用户名",
-  usernamePlaceholder: "请输入用户名",
-  passwordLabel: "密码",
-  passwordPlaceholder: "请输入密码",
-  confirmPasswordLabel: "确认密码",
-  confirmPasswordPlaceholder: "请再次输入密码",
-  inviteCodeLabel: "邀请码",
-  inviteCodePlaceholder: "请输入邀请码",
-  loginSubmit: "登录",
-  loginSubmitting: "登录中...",
-  registerSubmit: "创建账号",
-  registerSubmitting: "创建中...",
-} as const;
-
 export function LoginPage({
-  mode,
   error,
-  isSubmitting,
-  onModeChange,
-  onLogin,
-  onRegister,
+  casdoorEnabled = false,
+  casdoorDisplayName = "Casdoor",
+  onCasdoorAuthenticated,
+  onCasdoorError,
 }: LoginPageProps) {
-  const [loginForm, setLoginForm] = useState<LoginCredentials>({
-    username: "",
-    password: "",
-  });
-  const [registerForm, setRegisterForm] = useState<RegisterCredentials>({
-    username: "",
-    password: "",
-    confirmPassword: "",
-    inviteCode: "",
-  });
-
-  const isLoginDisabled =
-    isSubmitting || loginForm.username.trim().length === 0 || loginForm.password.trim().length === 0;
-  const isRegisterDisabled =
-    isSubmitting ||
-    registerForm.username.trim().length === 0 ||
-    registerForm.password.trim().length === 0 ||
-    registerForm.confirmPassword.trim().length === 0 ||
-    registerForm.inviteCode.trim().length === 0;
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (mode === "login") {
-      if (isLoginDisabled) {
-        return;
-      }
-
-      await onLogin(loginForm);
-      return;
-    }
-
-    if (isRegisterDisabled) {
-      return;
-    }
-
-    await onRegister(registerForm);
-  }
-
+  const { theme } = useTheme();
   return (
-    <main className="auth-shell aurora-shell">
-      <AuroraBackground testId="aurora-background" />
+    <main className="auth-shell auth-gradient-shell">
+      <div
+        className="auth-gradient-waves"
+        data-testid="gradient-waves-background"
+        aria-hidden="true"
+      >
+        <GradientWaves
+          horizonColor={theme === "dark" ? "#251744" : "#B8CCE8"}
+          waveColor={theme === "dark" ? "#895EE8" : "#376FBC"}
+          crestColor={theme === "dark" ? "#F4EDFF" : "#78A0D2"}
+          speed={0.22}
+          amplitude={2.8}
+          waveScale={0.58}
+          waveRatio={0.92}
+          swell={28}
+          turbulence={14}
+          tilt={1.13}
+          zoom={0.94}
+          height={6.2}
+          fogDepth={24}
+          detail="low"
+          brightness={theme === "dark" ? 0.96 : 1}
+          opacity={theme === "dark" ? 0.82 : 0.95}
+          mouseInteraction
+          parallaxStrength={0.18}
+          grain={false}
+        />
+      </div>
+      <ThemeToggle className="theme-toggle--auth" />
       <section className="auth-shell__frame">
-        <section className="auth-panel auth-panel--login glass-panel-card" data-testid="login-shell-card">
-          <div className="auth-panel__brand">
-            <span className="brand-mark" aria-hidden="true">
-              Cipher AI
-            </span>
-            <span className="status-dot">{COPY.status}</span>
+        <aside className="auth-brief" aria-label="Cipher Intelligence">
+          <div className="auth-brief__brand">
+            <span className="auth-brief__mark"><img src={cipherLogo} alt="" /></span>
+            <span>Cipher Intelligence</span>
           </div>
-
-          <div className="auth-panel__intro">
-            <p className="eyebrow">{COPY.eyebrow}</p>
-            <h1>{COPY.title}</h1>
-            <p className="lead">{COPY.lead}</p>
+          <div className="auth-brief__copy">
+            <h1>
+              <span>把复杂线索，</span>
+              <span>变成清晰行动。</span>
+            </h1>
+            <p>研判样本、关联行为，在同一处沉淀调查上下文。</p>
           </div>
-
-          <div className="auth-mode-toggle" role="tablist" aria-label="认证模式">
-            <button
-              type="button"
-              className={`auth-mode-toggle__button${mode === "login" ? " auth-mode-toggle__button--active" : ""}`}
-              aria-pressed={mode === "login"}
-              onClick={() => onModeChange("login")}
-              disabled={isSubmitting}
-            >
-              {COPY.loginTab}
-            </button>
-            <button
-              type="button"
-              className={`auth-mode-toggle__button${mode === "register" ? " auth-mode-toggle__button--active" : ""}`}
-              aria-pressed={mode === "register"}
-              onClick={() => onModeChange("register")}
-              disabled={isSubmitting}
-            >
-              {COPY.registerTab}
-            </button>
+          <div className="auth-brief__signals" aria-label="平台能力">
+            <span><IconShieldCheck size={18} stroke={1.7} />威胁研判</span>
+            <span><IconBinaryTree2 size={18} stroke={1.7} />行为关联</span>
+            <span><IconActivity size={18} stroke={1.7} />持续分析</span>
           </div>
+        </aside>
 
-          <form className="login-form" onSubmit={handleSubmit}>
-            <div className="field">
-              <label htmlFor={`${mode}-username`}>{COPY.usernameLabel}</label>
-              <input
-                id={`${mode}-username`}
-                name="username"
-                type="text"
-                autoComplete={mode === "login" ? "username" : "new-password"}
-                value={mode === "login" ? loginForm.username : registerForm.username}
-                onChange={(event) => {
-                  const username = event.target.value;
-                  if (mode === "login") {
-                    setLoginForm((current) => ({ ...current, username }));
-                    return;
-                  }
+        <section className="auth-login-surface" data-testid="login-auth-surface" aria-label="登录 Cipher">
+          {casdoorEnabled ? (
+            <CasdoorEmbeddedLogin
+              displayName={casdoorDisplayName}
+              onAuthenticated={onCasdoorAuthenticated}
+              onError={onCasdoorError}
+            />
+          ) : (
+            <p className="status-banner status-banner--error" role="alert">
+              Casdoor 统一身份认证未配置，请检查服务端 CASDOOR_ENABLED 及应用凭据。
+            </p>
+          )}
 
-                  setRegisterForm((current) => ({ ...current, username }));
-                }}
-                placeholder={COPY.usernamePlaceholder}
-                disabled={isSubmitting}
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor={`${mode}-password`}>{COPY.passwordLabel}</label>
-              <input
-                id={`${mode}-password`}
-                name="password"
-                type="password"
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
-                value={mode === "login" ? loginForm.password : registerForm.password}
-                onChange={(event) => {
-                  const password = event.target.value;
-                  if (mode === "login") {
-                    setLoginForm((current) => ({ ...current, password }));
-                    return;
-                  }
-
-                  setRegisterForm((current) => ({ ...current, password }));
-                }}
-                placeholder={COPY.passwordPlaceholder}
-                disabled={isSubmitting}
-              />
-            </div>
-
-            {mode === "register" ? (
-              <>
-                <div className="field">
-                  <label htmlFor="register-confirm-password">{COPY.confirmPasswordLabel}</label>
-                  <input
-                    id="register-confirm-password"
-                    name="confirmPassword"
-                    type="password"
-                    autoComplete="new-password"
-                    value={registerForm.confirmPassword}
-                    onChange={(event) =>
-                      setRegisterForm((current) => ({
-                        ...current,
-                        confirmPassword: event.target.value,
-                      }))
-                    }
-                    placeholder={COPY.confirmPasswordPlaceholder}
-                    disabled={isSubmitting}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor="register-invite-code">{COPY.inviteCodeLabel}</label>
-                  <input
-                    id="register-invite-code"
-                    name="inviteCode"
-                    type="text"
-                    value={registerForm.inviteCode}
-                    onChange={(event) =>
-                      setRegisterForm((current) => ({
-                        ...current,
-                        inviteCode: event.target.value,
-                      }))
-                    }
-                    placeholder={COPY.inviteCodePlaceholder}
-                    disabled={isSubmitting}
-                  />
-                </div>
-              </>
-            ) : null}
-
-            {error ? (
-              <p className="status-banner status-banner--error" role="alert">
-                {error}
-              </p>
-            ) : null}
-
-            <button
-              className="primary-button primary-button--aurora"
-              type="submit"
-              disabled={mode === "login" ? isLoginDisabled : isRegisterDisabled}
-            >
-              {mode === "login"
-                ? isSubmitting
-                  ? COPY.loginSubmitting
-                  : COPY.loginSubmit
-                : isSubmitting
-                  ? COPY.registerSubmitting
-                  : COPY.registerSubmit}
-            </button>
-          </form>
+          {error ? (
+            <p className="status-banner status-banner--error" role="alert">
+              {error}
+            </p>
+          ) : null}
         </section>
       </section>
     </main>

@@ -1,0 +1,11 @@
+<svg width="284" height="72" viewBox="0 0 190 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(4 4) scale(.94)">
+    <path d="M32 3.5 55 12.6v17.1c0 14.6-8.3 25-23 31.3C17.3 54.7 9 44.3 9 29.7V12.6L32 3.5Z" fill="#155EEF"/>
+    <path d="M42.2 20.5a15.2 15.2 0 1 0 0 23" stroke="white" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="43" cy="20.5" r="3.2" fill="#71E6FF"/>
+    <circle cx="43" cy="43.5" r="3.2" fill="#71E6FF"/>
+    <path d="M46.5 25.5h5M46.5 38.5h5" stroke="#71E6FF" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+  <text x="76" y="42" fill="#F4F1F8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="720" letter-spacing="-1.2">Cipher</text>
+  <text x="78" y="59" fill="#958DA0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="10" font-weight="650" letter-spacing="2.2">INTELLIGENCE</text>
+</svg>

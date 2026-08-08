@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { AuthGuard } from "./components/AuthGuard";
 import { AppShell } from "./components/webllm/AppShell";
 import { useFrontendVersionRefresh } from "./hooks/useFrontendVersionRefresh";
-import { checkSession, login, logout, register } from "./lib/api";
-import { LoginPage, type AuthMode } from "./pages/LoginPage";
-import type { AuthUser, SessionStatus } from "./types";
+import { checkSession, getCasdoorAuthConfig, logout } from "./lib/api";
+import { LoginPage } from "./pages/LoginPage";
+import { AccountPage } from "./pages/AccountPage";
+import { CasesPage } from "./pages/CasesPage";
+import { SkillsPage } from "./pages/SkillsPage";
+import { JobsPage } from "./pages/JobsPage";
+import type { AuthUser, CasdoorAuthConfig, SessionStatus } from "./types";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) {
@@ -19,22 +23,21 @@ function isAuthenticatedUserSession(session: SessionStatus): session is SessionS
   return session.authenticated && session.user !== null;
 }
 
-function getInvalidAuthSessionMessage(mode: AuthMode): string {
-  return mode === "login"
-    ? "Login succeeded but did not return an authenticated session."
-    : "Registration succeeded but did not return an authenticated session.";
-}
-
 export function App() {
   useFrontendVersionRefresh();
 
   const navigate = useNavigate();
+  const location = useLocation();
   const [sessionKnown, setSessionKnown] = useState(false);
   const [sessionAuthenticated, setSessionAuthenticated] = useState(false);
   const [viewer, setViewer] = useState<AuthUser | null>(null);
-  const [mode, setMode] = useState<AuthMode>("login");
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [casdoor, setCasdoor] = useState<CasdoorAuthConfig>({
+    enabled: false,
+    provider: "casdoor",
+    displayName: "Casdoor",
+    managementUrl: "",
+  });
   const authenticated = sessionAuthenticated && viewer !== null;
 
   function applySession(session: SessionStatus) {
@@ -42,16 +45,11 @@ export function App() {
     setViewer(session.user);
   }
 
-  function rejectInvalidAuthSession(mode: AuthMode) {
-    setSessionAuthenticated(false);
-    setViewer(null);
-    setError(getInvalidAuthSessionMessage(mode));
-  }
-
   useEffect(() => {
     let active = true;
 
     async function restoreSession() {
+      const casdoorError = new URLSearchParams(location.search).get("casdoor_error");
       try {
         const session = await checkSession();
         if (!active) {
@@ -59,6 +57,9 @@ export function App() {
         }
 
         applySession(session);
+        if (!session.authenticated && casdoorError) {
+          setError(casdoorError);
+        }
       } catch (nextError) {
         if (!active) {
           return;
@@ -81,52 +82,33 @@ export function App() {
     };
   }, []);
 
-  async function handleLogin(credentials: { username: string; password: string }) {
-    setError(null);
-    setIsSubmitting(true);
+  useEffect(() => {
+    let active = true;
 
-    try {
-      const session = await login(credentials);
-
-      if (!isAuthenticatedUserSession(session)) {
-        rejectInvalidAuthSession("login");
-        return;
-      }
-
-      applySession(session);
-      navigate("/chat", { replace: true });
-    } catch (nextError) {
-      setSessionAuthenticated(false);
-      setViewer(null);
-      setError(getErrorMessage(nextError));
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  async function handleRegister(payload: {
-    username: string;
-    password: string;
-    confirmPassword: string;
-    inviteCode: string;
-  }) {
-    if (payload.password !== payload.confirmPassword) {
-      setError("两次输入的密码不一致。");
-      return;
-    }
-
-    setError(null);
-    setIsSubmitting(true);
-
-    try {
-      const session = await register({
-        username: payload.username,
-        password: payload.password,
-        inviteCode: payload.inviteCode,
+    getCasdoorAuthConfig()
+      .then((config) => {
+        if (active) {
+          setCasdoor(config);
+        }
+      })
+      .catch(() => {
+        setError("无法读取 Casdoor 配置，请检查身份服务是否可用。");
       });
 
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function handleCasdoorAuthenticated() {
+    setError(null);
+
+    try {
+      const session = await checkSession();
       if (!isAuthenticatedUserSession(session)) {
-        rejectInvalidAuthSession("register");
+        setSessionAuthenticated(false);
+        setViewer(null);
+        setError("Casdoor 登录成功，但 Cipher 会话未能建立。请重试。");
         return;
       }
 
@@ -136,8 +118,6 @@ export function App() {
       setSessionAuthenticated(false);
       setViewer(null);
       setError(getErrorMessage(nextError));
-    } finally {
-      setIsSubmitting(false);
     }
   }
 
@@ -175,15 +155,11 @@ export function App() {
             <Navigate to="/chat" replace />
           ) : (
             <LoginPage
-              mode={mode}
-              onModeChange={(nextMode) => {
-                setMode(nextMode);
-                setError(null);
-              }}
               error={error}
-              isSubmitting={isSubmitting}
-              onLogin={handleLogin}
-              onRegister={handleRegister}
+              casdoorEnabled={casdoor.enabled}
+              casdoorDisplayName={casdoor.displayName}
+              onCasdoorAuthenticated={handleCasdoorAuthenticated}
+              onCasdoorError={setError}
             />
           )
         }
@@ -192,10 +168,42 @@ export function App() {
         path="/chat"
         element={
           <AuthGuard authenticated={authenticated}>
-            <AppShell onLogout={handleLogout} sessionError={error} />
+            <AppShell
+              viewer={viewer}
+              onOpenAccount={() => navigate("/account")}
+              onOpenCases={() => navigate("/cases")}
+              onOpenSkills={() => navigate("/skills")}
+              onOpenJobs={() => navigate("/jobs")}
+              onLogout={handleLogout}
+              sessionError={error}
+            />
           </AuthGuard>
         }
       />
+      <Route
+        path="/cases"
+        element={
+          <AuthGuard authenticated={authenticated}>
+            <CasesPage onBack={() => navigate("/chat")} />
+          </AuthGuard>
+        }
+      />
+      <Route
+        path="/account"
+        element={
+          <AuthGuard authenticated={authenticated}>
+            {viewer ? (
+              <AccountPage
+                viewer={viewer}
+                onBack={() => navigate("/chat")}
+                onViewerChange={setViewer}
+              />
+            ) : null}
+          </AuthGuard>
+        }
+      />
+      <Route path="/skills" element={<AuthGuard authenticated={authenticated}><SkillsPage onBack={() => navigate("/chat")} /></AuthGuard>} />
+      <Route path="/jobs" element={<AuthGuard authenticated={authenticated}><JobsPage onBack={() => navigate("/chat")} /></AuthGuard>} />
       <Route path="*" element={<Navigate to={authenticated ? "/chat" : "/"} replace />} />
     </Routes>
   );

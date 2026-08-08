@@ -21,7 +21,7 @@ function getStatusTitle(runtimeStatus: RuntimePanelProps["runtimeStatus"]): stri
 function getStatusBody(runtimeStatus: RuntimePanelProps["runtimeStatus"]): string {
   switch (runtimeStatus) {
     case "loading":
-      return "DeepSeek is streaming a response from the shared campus runtime.";
+      return "Cipher is streaming a response from the shared campus runtime.";
     case "ready":
       return "Shared campus runtime is available for new prompts.";
     case "error":

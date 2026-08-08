@@ -2,22 +2,33 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createConversation as createConversationApi,
+  createCapeCase as createCapeCaseApi,
   deleteConversation as deleteConversationApi,
+  getCapeCase,
   getConversationMessages,
   importConversation as importConversationApi,
+  listCapeCases,
   listConversations,
   streamChat,
-  uploadZip as uploadZipApi
+  updateConversation as updateConversationApi,
+  uploadZip as uploadZipApi,
+  runSkill as runSkillApi
 } from "../lib/api";
 import { loadChatState, saveChatState } from "../lib/storage";
+import { uploadFileResumably } from "../lib/resumableUpload";
 import type {
+  CapeCase,
+  CaseMetadataUpdate,
+  AnalysisTemplate,
   DeepSeekModelId,
   LocalChatMessage,
   LocalConversation,
   MessageAttachment,
+  MessageEvidence,
   OutboundChatMessage,
   PersistedChatState,
   RuntimeStatus,
+  SkillPackage,
   StagedAttachment
 } from "../types";
 import {
@@ -29,19 +40,32 @@ type UseServerChatResult = {
   activeConversation: LocalConversation | null;
   activeConversationId: string | null;
   conversations: LocalConversation[];
+  createConversationFromTemplate?: (template: AnalysisTemplate | null) => Promise<LocalConversation | void>;
   clearFiles: () => void;
   deleteConversation: (conversationId: string) => void;
+  renameConversation?: (conversationId: string, title: string) => Promise<void>;
+  setConversationPinned?: (conversationId: string, pinned: boolean) => Promise<void>;
+  setConversationArchived?: (conversationId: string, archived: boolean) => Promise<void>;
+  updateCaseMetadata?: (conversationId: string, metadata: CaseMetadataUpdate) => Promise<void>;
   error: string | null;
   isGenerating: boolean;
+  notificationMessage?: string | null;
+  clearNotification?: () => void;
   addFiles: (files: File[]) => void;
   removeFile: (attachmentId: string) => void;
+  retryFile?: (attachmentId: string) => void;
   removePendingZipContext?: () => void;
   runtimeStatus: RuntimeStatus;
   sendMessage: (content: string) => Promise<void>;
+  runConversationSkill?: (skill: SkillPackage, prompt: string, input: Record<string, unknown>) => Promise<void>;
+  stopGeneration?: () => void;
+  submitCapeCase: (file: File) => Promise<CapeCase>;
+  refreshCapeCase: (caseId: number) => Promise<CapeCase>;
   setWebSearchEnabled: (enabled: boolean) => void;
   uploadZip: (file: File, prompt: string) => Promise<void>;
   setActiveConversationId: (conversationId: string | null) => void;
   setModelId: (modelId: DeepSeekModelId) => void;
+  updateSettings?: (settings: Partial<PersistedChatState["settings"]>) => void;
   stagedFiles: StagedAttachment[];
   settings: PersistedChatState["settings"];
   webSearchEnabled: boolean;
@@ -51,18 +75,31 @@ const DEFAULT_CHAT_STATE: PersistedChatState = {
   activeConversationId: null,
   conversations: [],
   settings: {
-    systemPrompt: "You are a helpful assistant."
+    systemPrompt: "You are a helpful assistant.",
+    responseLanguage: "zh-CN",
+    responseLength: "balanced",
+    defaultWebSearch: false,
+    capeNotificationsEnabled: true,
+    motionPreference: "system",
+    transparencyPreference: "system"
   }
 };
 
 const MISSING_ZIP_CONTEXT_ERROR = "ZIP 上下文不存在或已过期，请重新上传压缩包。";
 const STREAM_KEEPALIVE_MARKER = "\u001e__CIPHER_KEEPALIVE__\u001e";
 const STREAM_ERROR_PREFIX = "\u001e__CIPHER_ERROR__:";
+const STREAM_EVIDENCE_PREFIX = "\u001e__CIPHER_EVIDENCE__:";
 const STREAM_MARKER_SUFFIX = "\u001e";
+const ALLOWED_ATTACHMENT_EXTENSIONS = new Set(["txt","log","md","markdown","csv","json","xml","yaml","yml","sql","pdf","doc","docx","xls","xlsx","ppt","pptx","zip","rar","7z","tar","gz","tgz","bz2","xz","png","jpg","jpeg","webp","gif","svg","bmp","tif","tiff","heic","py","js","jsx","mjs","cjs","ts","tsx","mts","cts","java","c","cc","cpp","cxx","h","hpp","hh","hxx","html","htm","css","scss","sass","less","mp4","mov","mkv","avi","webm","flv","mpg","mpeg","m4v","mp3","wav","aac","m4a","flac","ogg","oga","sqlite","sqlite3","db","mdb","accdb","pcap","cap","evtx"]);
 
-function parseStreamPayload(text: string): { content: string; error: string | null } {
+function parseStreamPayload(text: string): {
+  content: string;
+  error: string | null;
+  evidence: MessageEvidence[];
+} {
   let content = text.split(STREAM_KEEPALIVE_MARKER).join("");
   let error: string | null = null;
+  const evidence: MessageEvidence[] = [];
 
   while (true) {
     const start = content.indexOf(STREAM_ERROR_PREFIX);
@@ -82,7 +119,48 @@ function parseStreamPayload(text: string): { content: string; error: string | nu
     content = `${content.slice(0, start)}${content.slice(end + STREAM_MARKER_SUFFIX.length)}`;
   }
 
-  return { content, error };
+  while (true) {
+    const start = content.indexOf(STREAM_EVIDENCE_PREFIX);
+    if (start === -1) {
+      break;
+    }
+    const end = content.indexOf(STREAM_MARKER_SUFFIX, start + STREAM_EVIDENCE_PREFIX.length);
+    if (end === -1) {
+      content = content.slice(0, start);
+      break;
+    }
+    const rawPayload = content.slice(start + STREAM_EVIDENCE_PREFIX.length, end);
+    try {
+      const parsed = JSON.parse(rawPayload) as unknown;
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (
+            typeof item === "object" &&
+            item !== null &&
+            typeof (item as MessageEvidence).citation === "string" &&
+            typeof (item as MessageEvidence).title === "string" &&
+            typeof (item as MessageEvidence).sourceType === "string"
+          ) {
+            evidence.push(item as MessageEvidence);
+          }
+        }
+      }
+    } catch {
+      // Ignore malformed evidence metadata while preserving the answer stream.
+    }
+    content = `${content.slice(0, start)}${content.slice(end + STREAM_MARKER_SUFFIX.length)}`;
+  }
+
+  const dedupedEvidence = evidence.filter(
+    (item, index, items) =>
+      items.findIndex(
+        (candidate) =>
+          candidate.citation === item.citation &&
+          candidate.title === item.title &&
+          candidate.url === item.url
+      ) === index
+  );
+  return { content, error, evidence: dedupedEvidence };
 }
 
 function createId(prefix: string): string {
@@ -100,6 +178,9 @@ function createLocalConversation(firstMessage: string): LocalConversation {
   return {
     id: createId("conversation"),
     title: normalized.slice(0, 48) || "New conversation",
+    caseStatus: "open",
+    severity: "unknown",
+    tags: [],
     createdAt: timestamp,
     updatedAt: timestamp,
     messages: []
@@ -312,6 +393,30 @@ function appendMessages(
   );
 }
 
+function upsertCapeCase(
+  conversations: LocalConversation[],
+  conversationId: string,
+  capeCase: CapeCase
+): LocalConversation[] {
+  return conversations.map((conversation) => {
+    if (conversation.id !== conversationId) {
+      return conversation;
+    }
+
+    const existingCases = conversation.capeCases ?? [];
+    const hasExistingCase = existingCases.some((candidate) => candidate.id === capeCase.id);
+    const nextCases = hasExistingCase
+      ? existingCases.map((candidate) => (candidate.id === capeCase.id ? capeCase : candidate))
+      : [...existingCases, capeCase];
+
+    return {
+      ...conversation,
+      capeCases: nextCases,
+      updatedAt: new Date().toISOString()
+    };
+  });
+}
+
 function mergeRemoteMessagesWithLocalAttachments(
   remoteMessages: LocalChatMessage[],
   localMessages: LocalChatMessage[]
@@ -377,11 +482,16 @@ export function useServerChat(): UseServerChatResult {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedAttachment[]>([]);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(
+    () => chatState.settings.defaultWebSearch ?? false
+  );
+  const [notificationMessage, setNotificationMessage] = useState<string | null>(null);
 
   const chatStateRef = useRef(chatState);
   const generationInFlightRef = useRef(false);
   const hydratedFromCloudRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const notifiedCapeCasesRef = useRef(new Set<number>());
 
   useEffect(() => {
     chatStateRef.current = chatState;
@@ -417,6 +527,13 @@ export function useServerChat(): UseServerChatResult {
               return {
                 ...conversation,
                 id: String(importedConversation.id),
+                isPinned: importedConversation.is_pinned ?? false,
+                isArchived: importedConversation.is_archived ?? false,
+                caseStatus: importedConversation.case_status ?? "open",
+                severity: importedConversation.severity ?? "unknown",
+                assignee: importedConversation.assignee ?? null,
+                tags: importedConversation.tags ?? [],
+                caseSummary: importedConversation.case_summary ?? null,
                 createdAt: importedConversation.created_at,
                 updatedAt: importedConversation.updated_at
               };
@@ -442,6 +559,7 @@ export function useServerChat(): UseServerChatResult {
         const hydratedConversations = await Promise.all(
           remoteConversations.items.map(async (conversation) => {
             const messages = await getConversationMessages(String(conversation.id));
+            const capeCases = await listCapeCases(String(conversation.id));
             const localConversation = chatStateRef.current.conversations.find(
               (candidate) => candidate.id === String(conversation.id)
             );
@@ -452,18 +570,30 @@ export function useServerChat(): UseServerChatResult {
               createdAt: message.created_at,
               ...(message.attachments && message.attachments.length > 0
                 ? { attachments: message.attachments }
+                : {}),
+              ...(message.evidence && message.evidence.length > 0
+                ? { evidence: message.evidence }
                 : {})
             }));
 
             return {
               id: String(conversation.id),
               title: conversation.title,
+              isPinned: conversation.is_pinned ?? false,
+              isArchived: conversation.is_archived ?? false,
+              caseStatus: conversation.case_status ?? "open",
+              severity: conversation.severity ?? "unknown",
+              assignee: conversation.assignee ?? null,
+              tags: conversation.tags ?? [],
+              caseSummary: conversation.case_summary ?? null,
+              analysisTemplate: conversation.analysis_config ?? null,
               createdAt: conversation.created_at,
               updatedAt: conversation.updated_at,
               messages: mergeRemoteMessagesWithLocalAttachments(
                 remoteMessages,
                 localConversation?.messages ?? []
-              )
+              ),
+              capeCases: capeCases.items
             } satisfies LocalConversation;
           })
         );
@@ -496,6 +626,80 @@ export function useServerChat(): UseServerChatResult {
   );
   const activeModelId = resolveDeepSeekModelId(chatState.settings.modelId);
 
+  useEffect(() => {
+    const pendingCases = chatState.conversations.flatMap((conversation) =>
+      (conversation.capeCases ?? [])
+        .filter((capeCase) => !capeCase.completed)
+        .map((capeCase) => ({ capeCase, conversationId: conversation.id }))
+    );
+    if (pendingCases.length === 0) {
+      return;
+    }
+
+    let active = true;
+    let checking = false;
+
+    async function checkPendingCases() {
+      if (checking) {
+        return;
+      }
+      checking = true;
+
+      try {
+        await Promise.all(
+          pendingCases.map(async ({ capeCase, conversationId }) => {
+            try {
+              const refreshedCase = await getCapeCase(capeCase.id);
+              if (!active) {
+                return;
+              }
+
+              setChatState((previousState) => ({
+                ...previousState,
+                conversations: upsertCapeCase(
+                  previousState.conversations,
+                  conversationId,
+                  refreshedCase
+                )
+              }));
+
+              if (
+                refreshedCase.completed &&
+                !notifiedCapeCasesRef.current.has(refreshedCase.id) &&
+                (chatState.settings.capeNotificationsEnabled ?? true)
+              ) {
+                notifiedCapeCasesRef.current.add(refreshedCase.id);
+                const message = `CAPE Case #${refreshedCase.id}（${refreshedCase.sampleName}）分析完成`;
+                setNotificationMessage(message);
+
+                if (
+                  typeof window !== "undefined" &&
+                  "Notification" in window &&
+                  Notification.permission === "granted"
+                ) {
+                  new Notification("Cipher 分析完成", { body: message });
+                }
+              }
+            } catch {
+              // Keep polling other cases; transient CAPE errors remain recoverable in the case card.
+            }
+          })
+        );
+      } finally {
+        checking = false;
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void checkPendingCases();
+    }, 5000);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [chatState.conversations, chatState.settings.capeNotificationsEnabled]);
+
   async function ensureRemoteConversation(
     conversation: LocalConversation | null,
     fallbackTitle: string
@@ -512,6 +716,13 @@ export function useServerChat(): UseServerChatResult {
       ...(conversation ?? createLocalConversation(fallbackTitle)),
       id: String(createdConversation.id),
       title: createdConversation.title,
+      isPinned: createdConversation.is_pinned ?? false,
+      isArchived: createdConversation.is_archived ?? false,
+      caseStatus: createdConversation.case_status ?? "open",
+      severity: createdConversation.severity ?? "unknown",
+      assignee: createdConversation.assignee ?? null,
+      tags: createdConversation.tags ?? [],
+      caseSummary: createdConversation.case_summary ?? null,
       createdAt: createdConversation.created_at,
       updatedAt: createdConversation.updated_at
     };
@@ -529,6 +740,8 @@ export function useServerChat(): UseServerChatResult {
     }
 
     generationInFlightRef.current = true;
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
     setError(null);
     setIsGenerating(true);
     setRuntimeStatus("loading");
@@ -547,7 +760,8 @@ export function useServerChat(): UseServerChatResult {
     );
     const useWebSearchForRequest = webSearchEnabled;
     const sentAttachments = serializeSentAttachments(regularStagedFilesForRequest);
-    const filesForRequest = regularStagedFilesForRequest.map((attachment) => attachment.file);
+    const filesForRequest = regularStagedFilesForRequest.filter((attachment) => !attachment.uploadId).map((attachment) => attachment.file);
+    const uploadedFileIds = regularStagedFilesForRequest.flatMap((attachment) => attachment.uploadId ? [attachment.uploadId] : []);
     const targetConversation = await ensureRemoteConversation(
       existingConversation,
       normalizedContent.slice(0, 48) || "New conversation"
@@ -611,7 +825,11 @@ export function useServerChat(): UseServerChatResult {
         {
           conversationId: targetConversation.id,
           ...(useWebSearchForRequest ? { webSearch: true } : {}),
-          ...(currentZipContextId ? { zipContextId: currentZipContextId } : {})
+          ...(currentZipContextId ? { zipContextId: currentZipContextId } : {}),
+          responseLanguage: currentState.settings.responseLanguage ?? "zh-CN",
+          responseLength: currentState.settings.responseLength ?? "balanced",
+          signal: abortController.signal
+          ,...(uploadedFileIds.length ? { uploadedFileIds } : {})
         }
       );
       const reader = stream.getReader();
@@ -637,7 +855,10 @@ export function useServerChat(): UseServerChatResult {
               message.id === assistantMessage.id
                 ? {
                     ...message,
-                    content: assistantContent
+                    content: assistantContent,
+                    ...(parsedPayload.evidence.length > 0
+                      ? { evidence: parsedPayload.evidence }
+                      : {})
                   }
                 : message
             )
@@ -665,7 +886,10 @@ export function useServerChat(): UseServerChatResult {
               message.id === assistantMessage.id
                 ? {
                     ...message,
-                    content: assistantContent
+                    content: assistantContent,
+                    ...(parsedPayload.evidence.length > 0
+                      ? { evidence: parsedPayload.evidence }
+                      : {})
                   }
                 : message
             )
@@ -682,6 +906,16 @@ export function useServerChat(): UseServerChatResult {
       await streamAssistantResponse();
       setRuntimeStatus("ready");
     } catch (nextError) {
+      if (
+        typeof nextError === "object" &&
+        nextError !== null &&
+        "name" in nextError &&
+        nextError.name === "AbortError"
+      ) {
+        setRuntimeStatus("ready");
+        return;
+      }
+
       const nextErrorMessage =
         nextError instanceof Error ? nextError.message : "Failed to generate response.";
 
@@ -746,9 +980,182 @@ export function useServerChat(): UseServerChatResult {
       setRuntimeStatus("error");
       setError(nextError instanceof Error ? nextError.message : "Failed to generate response.");
     } finally {
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
       generationInFlightRef.current = false;
       setIsGenerating(false);
     }
+  }
+
+  async function runConversationSkill(skill: SkillPackage, prompt: string, input: Record<string, unknown>) {
+    if (generationInFlightRef.current) throw new Error("Chat generation is already in progress.");
+    if (!skill.installed) throw new Error("请先在 Skills 市场安装该技能");
+    setError(null); setIsGenerating(true); setRuntimeStatus("loading");
+    try {
+      const currentState = chatStateRef.current;
+      const existingConversation = currentState.activeConversationId === null ? null :
+        currentState.conversations.find(item => item.id === currentState.activeConversationId) ?? null;
+      const targetConversation = await ensureRemoteConversation(existingConversation, prompt.slice(0, 48) || skill.name);
+      const result = await runSkillApi(skill.id, input, { conversationId: Number(targetConversation.id), prompt });
+      const messages = (result.conversationMessages ?? []).map(message => ({
+        id: String(message.id), role: message.role, content: message.content, createdAt: message.createdAt
+      } satisfies LocalChatMessage));
+      setChatState(previous => {
+        const exists = previous.conversations.some(item => item.id === targetConversation.id);
+        const base = exists ? previous.conversations : [targetConversation, ...previous.conversations];
+        return { ...previous, activeConversationId: targetConversation.id,
+          conversations: base.map(item => item.id === targetConversation.id
+            ? { ...item, messages: [...item.messages, ...messages], updatedAt: new Date().toISOString() }
+            : item) };
+      });
+      setRuntimeStatus("ready");
+    } catch (nextError) {
+      setRuntimeStatus("error"); setError(nextError instanceof Error ? nextError.message : "Skill 运行失败"); throw nextError;
+    } finally { setIsGenerating(false); }
+  }
+
+  function stopGeneration() {
+    abortControllerRef.current?.abort();
+  }
+
+  async function updateConversationMetadata(
+    conversationId: string,
+    payload: {
+      title?: string;
+      isPinned?: boolean;
+      isArchived?: boolean;
+      caseStatus?: CaseMetadataUpdate["caseStatus"];
+      severity?: CaseMetadataUpdate["severity"];
+      assignee?: string;
+      tags?: string[];
+      caseSummary?: string;
+    }
+  ) {
+    const previousConversation = chatStateRef.current.conversations.find(
+      (conversation) => conversation.id === conversationId
+    );
+    if (!previousConversation) {
+      return;
+    }
+
+    const applyUpdate = (conversation: LocalConversation): LocalConversation => ({
+      ...conversation,
+      ...(payload.title !== undefined ? { title: payload.title } : {}),
+      ...(payload.isPinned !== undefined ? { isPinned: payload.isPinned } : {}),
+      ...(payload.isArchived !== undefined
+        ? {
+            isArchived: payload.isArchived,
+            ...(payload.isArchived ? { isPinned: false } : {})
+          }
+        : {}),
+      ...(payload.caseStatus !== undefined ? { caseStatus: payload.caseStatus } : {}),
+      ...(payload.severity !== undefined ? { severity: payload.severity } : {}),
+      ...(payload.assignee !== undefined ? { assignee: payload.assignee || null } : {}),
+      ...(payload.tags !== undefined ? { tags: payload.tags } : {}),
+      ...(payload.caseSummary !== undefined ? { caseSummary: payload.caseSummary || null } : {}),
+      updatedAt: new Date().toISOString()
+    });
+
+    setChatState((previousState) => ({
+      ...previousState,
+      activeConversationId:
+        payload.isArchived && previousState.activeConversationId === conversationId
+          ? null
+          : previousState.activeConversationId,
+      conversations: previousState.conversations.map((conversation) =>
+        conversation.id === conversationId ? applyUpdate(conversation) : conversation
+      )
+    }));
+
+    if (!isRemoteConversationId(conversationId)) {
+      return;
+    }
+
+    try {
+      const updated = await updateConversationApi(conversationId, payload);
+      setChatState((previousState) => ({
+        ...previousState,
+        conversations: previousState.conversations.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                title: updated.title,
+                isPinned: updated.is_pinned ?? false,
+                isArchived: updated.is_archived ?? false,
+                caseStatus: updated.case_status ?? "open",
+                severity: updated.severity ?? "unknown",
+                assignee: updated.assignee ?? null,
+                tags: updated.tags ?? [],
+                caseSummary: updated.case_summary ?? null,
+                updatedAt: updated.updated_at
+              }
+            : conversation
+        )
+      }));
+    } catch (nextError) {
+      setChatState((previousState) => ({
+        ...previousState,
+        conversations: previousState.conversations.map((conversation) =>
+          conversation.id === conversationId ? previousConversation : conversation
+        )
+      }));
+      setError(nextError instanceof Error ? nextError.message : "更新会话失败。");
+      throw nextError;
+    }
+  }
+
+  async function submitCapeCase(file: File): Promise<CapeCase> {
+    const currentState = chatStateRef.current;
+    const existingConversation =
+      currentState.activeConversationId === null
+        ? null
+        : currentState.conversations.find(
+            (conversation) => conversation.id === currentState.activeConversationId
+          ) ?? null;
+    const targetConversation = await ensureRemoteConversation(
+      existingConversation,
+      `CAPE 分析：${file.name}`.slice(0, 48)
+    );
+
+    setChatState((previousState) => {
+      const hasConversation = previousState.conversations.some(
+        (conversation) => conversation.id === targetConversation.id
+      );
+
+      return {
+        ...previousState,
+        activeConversationId: targetConversation.id,
+        conversations: hasConversation
+          ? previousState.conversations
+          : [targetConversation, ...previousState.conversations]
+      };
+    });
+
+    const capeCase = await createCapeCaseApi(file, {
+      conversationId: targetConversation.id
+    });
+
+    setChatState((previousState) => ({
+      ...previousState,
+      activeConversationId: targetConversation.id,
+      conversations: upsertCapeCase(previousState.conversations, targetConversation.id, capeCase)
+    }));
+
+    return capeCase;
+  }
+
+  async function refreshCapeCase(caseId: number): Promise<CapeCase> {
+    const capeCase = await getCapeCase(caseId);
+    setChatState((previousState) => ({
+      ...previousState,
+      conversations: upsertCapeCase(
+        previousState.conversations,
+        String(capeCase.conversationId),
+        capeCase
+      )
+    }));
+    return capeCase;
   }
 
   async function uploadZip(file: File, prompt: string) {
@@ -894,21 +1301,63 @@ export function useServerChat(): UseServerChatResult {
     activeConversation,
     activeConversationId: chatState.activeConversationId,
     addFiles(files) {
-      setStagedFiles((previousFiles) => [
-        ...previousFiles,
-        ...files.map((file) => ({
+      const acceptedFiles = files.slice(0, Math.max(0, 10 - stagedFiles.length)).filter((file) => {
+        const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+        return file.size > 0 && file.size <= 100 * 1024 * 1024 && ALLOWED_ATTACHMENT_EXTENSIONS.has(extension);
+      });
+      const attachments = acceptedFiles.map((file) => ({
           id: createId("attachment"),
           file,
           name: file.name,
           type: inferAttachmentType(file),
-          size: file.size
-        }))
-      ]);
+          size: file.size,
+          uploadStatus: "hashing" as const,
+          uploadProgress: 2
+        }));
+      setStagedFiles((previousFiles) => [...previousFiles, ...attachments]);
+      if (acceptedFiles.length !== files.length) setError("每次最多 10 个附件，单个文件不能超过 100 MB，空文件无法上传。");
+      for (const attachment of attachments) {
+        void uploadFileResumably(attachment.file, (progress) => {
+          setStagedFiles((current) => current.map((item) => item.id === attachment.id ? {
+            ...item, uploadStatus: progress.status, uploadProgress: progress.progress,
+            uploadId: progress.uploadId, uploadError: progress.error, deduplicated: progress.deduplicated
+          } : item));
+        });
+      }
     },
     clearFiles() {
       setStagedFiles([]);
     },
+    retryFile(attachmentId) {
+      const attachment = stagedFiles.find((item) => item.id === attachmentId);
+      if (!attachment) return;
+      void uploadFileResumably(attachment.file, (progress) => {
+        setStagedFiles((current) => current.map((item) => item.id === attachmentId ? {
+          ...item, uploadStatus: progress.status, uploadProgress: progress.progress,
+          uploadId: progress.uploadId, uploadError: progress.error, deduplicated: progress.deduplicated
+        } : item));
+      });
+    },
+    clearNotification() {
+      setNotificationMessage(null);
+    },
     conversations: chatState.conversations,
+    async createConversationFromTemplate(template: AnalysisTemplate | null) {
+      const created = await createConversationApi({
+        title: template?.name ?? "新安全分析",
+        ...(template ? { templateId: template.id } : {})
+      });
+      const local: LocalConversation = {
+        ...createLocalConversation(created.title), id: String(created.id), title: created.title,
+        isPinned: created.is_pinned ?? false, isArchived: created.is_archived ?? false,
+        caseStatus: created.case_status ?? "open", severity: created.severity ?? "unknown",
+        assignee: created.assignee ?? null, tags: created.tags ?? [], caseSummary: created.case_summary ?? null,
+        analysisTemplate: created.analysis_config ?? template,
+        createdAt: created.created_at, updatedAt: created.updated_at, messages: []
+      };
+      setChatState(previous => ({ ...previous, conversations: [local, ...previous.conversations], activeConversationId: local.id }));
+      return local;
+    },
     deleteConversation(conversationId) {
       if (isRemoteConversationId(conversationId)) {
         void deleteConversationApi(conversationId).catch((nextError) => {
@@ -931,8 +1380,21 @@ export function useServerChat(): UseServerChatResult {
         };
       });
     },
+    renameConversation(conversationId, title) {
+      return updateConversationMetadata(conversationId, { title: title.trim() });
+    },
+    setConversationPinned(conversationId, pinned) {
+      return updateConversationMetadata(conversationId, { isPinned: pinned });
+    },
+    setConversationArchived(conversationId, archived) {
+      return updateConversationMetadata(conversationId, { isArchived: archived });
+    },
+    updateCaseMetadata(conversationId, metadata) {
+      return updateConversationMetadata(conversationId, metadata);
+    },
     error,
     isGenerating,
+    notificationMessage,
     removeFile(attachmentId) {
       setStagedFiles((previousFiles) =>
         previousFiles.filter((attachment) => attachment.id !== attachmentId)
@@ -960,6 +1422,10 @@ export function useServerChat(): UseServerChatResult {
     },
     runtimeStatus,
     sendMessage,
+    runConversationSkill,
+    stopGeneration,
+    submitCapeCase,
+    refreshCapeCase,
     setWebSearchEnabled,
     uploadZip,
     setActiveConversationId(conversationId) {
@@ -977,9 +1443,17 @@ export function useServerChat(): UseServerChatResult {
         }
       }));
     },
+    updateSettings(nextSettings) {
+      setChatState((previousState) => ({
+        ...previousState,
+        settings: {
+          ...previousState.settings,
+          ...nextSettings
+        }
+      }));
+    },
     stagedFiles,
-    settings: chatState.settings
-    ,
+    settings: chatState.settings,
     webSearchEnabled
   };
 }
@@ -987,4 +1461,3 @@ export function useServerChat(): UseServerChatResult {
 function isRemoteConversationId(value: string): boolean {
   return /^\d+$/.test(value);
 }
-

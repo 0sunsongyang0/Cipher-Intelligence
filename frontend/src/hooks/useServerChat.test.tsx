@@ -7,6 +7,7 @@ import {
   type PersistedChatState
 } from "../lib/storage";
 import { useServerChat } from "./useServerChat";
+import type { AnalysisTemplate, SkillPackage } from "../types";
 
 const { streamChat } = vi.hoisted(() => ({
   streamChat: vi.fn()
@@ -14,6 +15,12 @@ const { streamChat } = vi.hoisted(() => ({
 
 const { uploadZip } = vi.hoisted(() => ({
   uploadZip: vi.fn()
+}));
+
+const { createCapeCase, getCapeCase, listCapeCases } = vi.hoisted(() => ({
+  createCapeCase: vi.fn(),
+  getCapeCase: vi.fn(),
+  listCapeCases: vi.fn()
 }));
 
 const { listConversations } = vi.hoisted(() => ({
@@ -32,13 +39,30 @@ const { importConversation } = vi.hoisted(() => ({
   importConversation: vi.fn()
 }));
 
+const { deleteConversation, updateConversation } = vi.hoisted(() => ({
+  deleteConversation: vi.fn(),
+  updateConversation: vi.fn()
+}));
+
+const { installSkill, runSkill } = vi.hoisted(() => ({
+  installSkill: vi.fn(),
+  runSkill: vi.fn()
+}));
+
 vi.mock("../lib/api", () => ({
   streamChat,
   uploadZip,
+  createCapeCase,
+  getCapeCase,
+  listCapeCases,
   listConversations,
   getConversationMessages,
   createConversation,
-  importConversation
+  importConversation,
+  deleteConversation,
+  updateConversation,
+  installSkill,
+  runSkill
 }));
 
 function createTextStream(chunks: string[]): ReadableStream<Uint8Array> {
@@ -61,12 +85,20 @@ describe("useServerChat", () => {
     vi.restoreAllMocks();
     streamChat.mockReset();
     uploadZip.mockReset();
+    createCapeCase.mockReset();
+    getCapeCase.mockReset();
+    listCapeCases.mockReset();
     listConversations.mockReset();
     getConversationMessages.mockReset();
     createConversation.mockReset();
     importConversation.mockReset();
+    deleteConversation.mockReset();
+    updateConversation.mockReset();
+    installSkill.mockReset();
+    runSkill.mockReset();
     listConversations.mockResolvedValue({ items: [] });
     getConversationMessages.mockResolvedValue({ items: [] });
+    listCapeCases.mockResolvedValue({ items: [] });
     createConversation.mockImplementation(async ({ title }: { title: string }) => ({
       id: 1,
       title,
@@ -79,6 +111,14 @@ describe("useServerChat", () => {
       created_at: "2026-07-09T00:00:00.000Z",
       updated_at: "2026-07-09T00:01:00.000Z",
       importedMessages: messages.length
+    }));
+    updateConversation.mockImplementation(async (conversationId: string, payload: { title?: string; isPinned?: boolean; isArchived?: boolean }) => ({
+      id: Number(conversationId),
+      title: payload.title ?? "Conversation",
+      is_pinned: payload.isPinned ?? false,
+      is_archived: payload.isArchived ?? false,
+      created_at: "2026-07-09T00:00:00.000Z",
+      updated_at: "2026-07-09T00:02:00.000Z"
     }));
   });
 
@@ -155,6 +195,81 @@ describe("useServerChat", () => {
     ]);
   });
 
+  it("aborts an in-flight stream and keeps the partial response", async () => {
+    const encoder = new TextEncoder();
+    streamChat.mockImplementation(async (_messages, _files, _model, scope) =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode("partial answer"));
+          scope?.signal?.addEventListener("abort", () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            controller.error(error);
+          });
+        }
+      })
+    );
+
+    const { result } = renderHook(() => useServerChat());
+    let sendPromise!: Promise<void>;
+
+    act(() => {
+      sendPromise = result.current.sendMessage("Hi");
+    });
+    await waitFor(() => expect(result.current.isGenerating).toBe(true));
+    await waitFor(() => expect(result.current.activeConversation?.messages[1]?.content).toBe("partial answer"));
+
+    act(() => {
+      result.current.stopGeneration?.();
+    });
+    await act(async () => {
+      await sendPromise;
+    });
+
+    expect(result.current.isGenerating).toBe(false);
+    expect(result.current.runtimeStatus).toBe("ready");
+    expect(result.current.error).toBeNull();
+    expect(result.current.activeConversation?.messages[1]?.content).toBe("partial answer");
+  });
+
+  it("creates a remote conversation and attaches a CAPE case", async () => {
+    createCapeCase.mockResolvedValue({
+      id: 7,
+      conversationId: 1,
+      taskId: 99,
+      sampleName: "payload.exe",
+      status: "submitted",
+      completed: false,
+      score: null,
+      targetFilename: null,
+      machine: null,
+      sha256: null,
+      reusedExistingTask: false,
+      summary: null,
+      createdAt: "2026-07-20T00:00:00.000Z",
+      updatedAt: "2026-07-20T00:00:00.000Z"
+    });
+
+    const { result } = renderHook(() => useServerChat());
+
+    await act(async () => {
+      await result.current.submitCapeCase(
+        new File(["MZ"], "payload.exe", { type: "application/octet-stream" })
+      );
+    });
+
+    expect(createConversation).toHaveBeenCalledWith({ title: "CAPE 分析：payload.exe" });
+    expect(createCapeCase).toHaveBeenCalledWith(expect.any(File), { conversationId: "1" });
+    expect(result.current.activeConversationId).toBe("1");
+    expect(result.current.activeConversation?.capeCases).toMatchObject([
+      {
+        id: 7,
+        taskId: 99,
+        sampleName: "payload.exe"
+      }
+    ]);
+  });
+
   it("preserves emoji from the streamed assistant response", async () => {
     streamChat.mockResolvedValue(createTextStream(["你好", "🙂"]));
 
@@ -200,6 +315,37 @@ describe("useServerChat", () => {
     expect(loadChatState()?.conversations[0]?.messages[1]).toMatchObject({
       role: "assistant",
       content: "Hello world"
+    });
+  });
+
+  it("extracts structured evidence markers without leaking protocol text", async () => {
+    const marker = `\u001e__CIPHER_EVIDENCE__:${JSON.stringify([
+      {
+        sourceType: "web",
+        citation: "W1",
+        title: "Threat advisory",
+        url: "https://example.test/advisory",
+        locator: "\u8054\u7f51\u641c\u7d22\u7ed3\u679c 1"
+      }
+    ])}\u001e`;
+    streamChat.mockResolvedValue(createTextStream([marker, "Risk confirmed [W1]."]));
+
+    const { result } = renderHook(() => useServerChat());
+    await act(async () => {
+      await result.current.sendMessage("Check this indicator");
+    });
+
+    expect(result.current.activeConversation?.messages[1]).toMatchObject({
+      role: "assistant",
+      content: "Risk confirmed [W1].",
+      evidence: [
+        {
+          sourceType: "web",
+          citation: "W1",
+          title: "Threat advisory",
+          url: "https://example.test/advisory"
+        }
+      ]
     });
   });
 
@@ -280,6 +426,36 @@ describe("useServerChat", () => {
         ]
       }
     ]);
+  });
+
+  it("keeps template metadata when creating a template conversation", async () => {
+    const template = {
+      id: 4,
+      slug: "powershell",
+      name: "PowerShell 样本",
+      scenario: "分析脚本和编码载荷",
+      systemPrompt: "静态分析 PowerShell",
+      checklist: ["还原混淆"],
+      requiredSkills: ["powershell-deobfuscator"],
+      outputFormat: "摘要",
+      requiredEvidenceFields: ["source_text"],
+      recommendedModel: "chatgpt-5.4-az",
+      organizationId: null,
+      status: "published",
+      version: 1
+    } satisfies AnalysisTemplate;
+    const { result } = renderHook(() => useServerChat());
+
+    await waitFor(() => expect(result.current.runtimeStatus).toBe("ready"));
+    await act(async () => {
+      await result.current.createConversationFromTemplate?.(template);
+    });
+
+    expect(createConversation).toHaveBeenCalledWith({ title: "PowerShell 样本", templateId: 4 });
+    expect(result.current.activeConversation).toMatchObject({
+      title: "PowerShell 样本",
+      analysisTemplate: template
+    });
   });
 
   it("restores referenced file chips from cloud conversation history on mount", async () => {
@@ -538,7 +714,10 @@ describe("useServerChat", () => {
       [],
       "deepseek-v4-pro",
       {
-        conversationId: "1"
+        conversationId: "1",
+        responseLanguage: "zh-CN",
+        responseLength: "balanced",
+        signal: expect.anything()
       }
     );
   });
@@ -607,7 +786,10 @@ describe("useServerChat", () => {
       "deepseek-v4-flash",
       {
         conversationId: "1",
-        zipContextId: "zip-context-1"
+        zipContextId: "zip-context-1",
+        responseLanguage: "zh-CN",
+        responseLength: "balanced",
+        signal: expect.anything()
       }
     );
 
@@ -699,7 +881,10 @@ describe("useServerChat", () => {
       "deepseek-v4-flash",
       {
         conversationId: "1",
-        zipContextId: "zip-context-2"
+        zipContextId: "zip-context-2",
+        responseLanguage: "zh-CN",
+        responseLength: "balanced",
+        signal: expect.anything()
       }
     );
     expect(result.current.error).toBeNull();
@@ -963,7 +1148,10 @@ describe("useServerChat", () => {
       "deepseek-v4-flash",
       {
         conversationId: result.current.activeConversationId,
-        zipContextId: "zip-context-1"
+        zipContextId: "zip-context-1",
+        responseLanguage: "zh-CN",
+        responseLength: "balanced",
+        signal: expect.anything()
       }
     );
   });
@@ -1051,7 +1239,10 @@ describe("useServerChat", () => {
       [],
       "deepseek-v4-pro",
       {
-        conversationId: "1"
+        conversationId: "1",
+        responseLanguage: "zh-CN",
+        responseLength: "balanced",
+        signal: expect.anything()
       }
     );
   });
@@ -1074,7 +1265,10 @@ describe("useServerChat", () => {
       [],
       "deepseek-v4-flash",
       {
-        conversationId: activeConversationId
+        conversationId: activeConversationId,
+        responseLanguage: "zh-CN",
+        responseLength: "balanced",
+        signal: expect.anything()
       }
     );
   });
@@ -1100,7 +1294,10 @@ describe("useServerChat", () => {
       "deepseek-v4-flash",
       {
         conversationId: result.current.activeConversationId,
-        webSearch: true
+        webSearch: true,
+        responseLanguage: "zh-CN",
+        responseLength: "balanced",
+        signal: expect.anything()
       }
     );
     expect(result.current.webSearchEnabled).toBe(false);
@@ -1156,7 +1353,10 @@ describe("useServerChat", () => {
       [file],
       "deepseek-v4-flash",
       {
-        conversationId: result.current.activeConversationId
+        conversationId: result.current.activeConversationId,
+        responseLanguage: "zh-CN",
+        responseLength: "balanced",
+        signal: expect.anything()
       }
     );
     expect(result.current.stagedFiles).toHaveLength(0);
@@ -1458,6 +1658,53 @@ describe("useServerChat", () => {
     expect(result.current.conversations[0]?.id).toBe("conversation-1");
   });
 
+  it("persists conversation rename, pin, and archive metadata", async () => {
+    const savedState: PersistedChatState = {
+      activeConversationId: "1",
+      conversations: [
+        {
+          id: "1",
+          title: "Initial title",
+          createdAt: "2026-07-03T00:00:00.000Z",
+          updatedAt: "2026-07-03T00:01:00.000Z",
+          messages: []
+        }
+      ],
+      settings: { systemPrompt: "Be helpful" }
+    };
+    saveChatState(savedState);
+    listConversations.mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          title: "Initial title",
+          is_pinned: false,
+          is_archived: false,
+          created_at: "2026-07-03T00:00:00.000Z",
+          updated_at: "2026-07-03T00:01:00.000Z"
+        }
+      ]
+    });
+
+    const { result } = renderHook(() => useServerChat());
+    await waitFor(() => expect(result.current.activeConversationId).toBe("1"));
+
+    await act(async () => {
+      await result.current.renameConversation?.("1", "Incident 42");
+      await result.current.setConversationPinned?.("1", true);
+      await result.current.setConversationArchived?.("1", true);
+    });
+
+    expect(updateConversation).toHaveBeenNthCalledWith(1, "1", { title: "Incident 42" });
+    expect(updateConversation).toHaveBeenNthCalledWith(2, "1", { isPinned: true });
+    expect(updateConversation).toHaveBeenNthCalledWith(3, "1", { isArchived: true });
+    expect(result.current.activeConversationId).toBeNull();
+    expect(result.current.conversations[0]).toMatchObject({
+      isArchived: true,
+      isPinned: false
+    });
+  });
+
   it("deletes the active conversation and clears the selection", () => {
     const savedState: PersistedChatState = {
       activeConversationId: "conversation-1",
@@ -1487,7 +1734,56 @@ describe("useServerChat", () => {
     expect(result.current.activeConversation).toBeNull();
     expect(result.current.conversations).toHaveLength(0);
   });
+
+  it("runs an installed skill in a persisted conversation", async () => {
+    const skill: SkillPackage = {
+      id: 42, key: "ioc-enrichment", name: "IOC 富化", version: "1.0.0",
+      description: "Lookup IOC context", author: "Cipher", source: "builtin", sourceUrl: null,
+      permissions: ["threat_intel.lookup_ioc"], reviewStatus: "verified", enabled: true,
+      category: "threat-intelligence", tags: ["IOC"], pricing: "included", featured: true,
+      installed: true, installCount: 1, runCount: 0,
+      entitlement: { tier: "standard", allowed: true },
+      inputs: { required: ["iocs"], properties: { iocs: { type: "array", label: "IOC" } } }
+    };
+    runSkill.mockResolvedValue({
+      id: 7, skillId: 42, caseId: null, status: "completed", input: { iocs: ["8.8.8.8"] },
+      output: { summary: "IOC checked" }, tools: [], error: null,
+      createdAt: "2026-08-07T00:00:00.000Z", completedAt: "2026-08-07T00:00:01.000Z",
+      conversationMessages: [
+        { id: 101, role: "user", content: "/ioc 8.8.8.8", createdAt: "2026-08-07T00:00:00.000Z" },
+        { id: 102, role: "assistant", content: "IOC checked", createdAt: "2026-08-07T00:00:01.000Z" }
+      ]
+    });
+
+    const { result } = renderHook(() => useServerChat());
+    await waitFor(() => expect(result.current.runtimeStatus).toBe("ready"));
+    await act(async () => {
+      await result.current.runConversationSkill?.(skill, "/ioc 8.8.8.8", { iocs: ["8.8.8.8"] });
+    });
+
+    expect(installSkill).not.toHaveBeenCalled();
+    expect(runSkill).toHaveBeenCalledWith(42, { iocs: ["8.8.8.8"] }, {
+      conversationId: 1, prompt: "/ioc 8.8.8.8"
+    });
+    expect(result.current.activeConversation?.messages.map(message => message.content)).toEqual([
+      "/ioc 8.8.8.8", "IOC checked"
+    ]);
+  });
+
+  it("rejects an uninstalled skill without installing or creating a conversation", async () => {
+    const skill = {
+      id: 43, key: "ioc-enrichment", name: "IOC 富化", version: "1.0.0",
+      installed: false
+    } as SkillPackage;
+    const { result } = renderHook(() => useServerChat());
+    await waitFor(() => expect(result.current.runtimeStatus).toBe("ready"));
+
+    await expect(result.current.runConversationSkill?.(
+      skill, "/ioc 1.1.1.1", { iocs: ["1.1.1.1"] }
+    )).rejects.toThrow("请先在 Skills 市场安装该技能");
+
+    expect(installSkill).not.toHaveBeenCalled();
+    expect(runSkill).not.toHaveBeenCalled();
+    expect(createConversation).not.toHaveBeenCalled();
+  });
 });
-
-
-

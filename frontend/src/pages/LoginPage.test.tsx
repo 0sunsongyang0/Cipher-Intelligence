@@ -1,136 +1,185 @@
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { ThemeProvider } from "../theme";
 import { LoginPage } from "./LoginPage";
 
+function renderLogin(overrides: Partial<React.ComponentProps<typeof LoginPage>> = {}) {
+  const props: React.ComponentProps<typeof LoginPage> = {
+    error: null,
+    casdoorEnabled: true,
+    casdoorDisplayName: "Cipher SSO",
+    onCasdoorAuthenticated: vi.fn(),
+    onCasdoorError: vi.fn(),
+    ...overrides,
+  };
+
+  return { ...render(<LoginPage {...props} />), props };
+}
+
 describe("LoginPage", () => {
-  it("renders the aurora auth shell with login as the default mode", () => {
-    render(
-      <LoginPage
-        mode="login"
-        onModeChange={vi.fn()}
-        onLogin={vi.fn()}
-        onRegister={vi.fn()}
-        isSubmitting={false}
-        error={null}
-      />
-    );
+  it("renders Casdoor directly in the Cipher login surface without local account fields", () => {
+    renderLogin();
 
-    expect(screen.getByTestId("aurora-background")).toBeInTheDocument();
-    expect(screen.getByTestId("login-shell-card")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "进入聊天界面" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "登录", pressed: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("gradient-waves-background")).toBeInTheDocument();
+    expect(screen.getByTestId("login-auth-surface")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "切换到夜间模式" })).toBeInTheDocument();
+    expect(screen.getByText("夜间")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "把复杂线索， 变成清晰行动。" })).toBeInTheDocument();
+    expect(screen.getByTitle("Cipher SSO 登录")).toHaveAttribute(
+      "src",
+      "/api/auth/casdoor/login?return_to=%2Fauth%2Fcasdoor%2Fembedded&theme=light"
+    );
+    const frame = screen.getByTitle("Cipher SSO 登录");
+    expect(frame).toHaveAttribute("scrolling", "no");
+    expect(frame.getAttribute("sandbox")?.split(" ")).toContain(
+      "allow-top-navigation-by-user-activation"
+    );
+    expect(screen.queryByLabelText("用户名")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("密码")).not.toBeInTheDocument();
+    expect(screen.queryByText("注册")).not.toBeInTheDocument();
+    expect(screen.queryByText("由 Cipher SSO 安全提供")).not.toBeInTheDocument();
+  });
+
+  it("shows a configuration error instead of falling back to local login", () => {
+    renderLogin({ casdoorEnabled: false });
+
+    expect(screen.getByText("统一身份认证当前不可用，可使用本地访问密码登录。")).toBeInTheDocument();
     expect(screen.getByLabelText("用户名")).toBeInTheDocument();
-    expect(screen.getByLabelText("密码")).toBeInTheDocument();
+    expect(screen.getByLabelText("本地访问密码")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "登录" })).toBeInTheDocument();
+    expect(screen.queryByTitle(/登录/)).not.toBeInTheDocument();
   });
 
-  it("submits username and password for login", async () => {
-    const user = userEvent.setup();
-    const onLogin = vi.fn();
+  it("submits the local account login when Casdoor is unavailable", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          authenticated: true,
+          user: {
+            id: 1,
+            username: "codex",
+            displayName: "codex",
+            avatarUrl: null,
+            isAdmin: false,
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      )
+    );
+    const onCasdoorAuthenticated = vi.fn();
+    const onCasdoorError = vi.fn();
+    renderLogin({
+      casdoorEnabled: false,
+      onCasdoorAuthenticated,
+      onCasdoorError
+    });
 
+    fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "codex" } });
+    fireEvent.change(screen.getByLabelText("本地访问密码"), { target: { value: "local-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    await waitFor(() => expect(onCasdoorAuthenticated).toHaveBeenCalledTimes(1));
+    expect(fetchSpy).toHaveBeenCalledWith("/api/auth/login", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ username: "codex", password: "local-password" })
+    });
+    expect(onCasdoorError).not.toHaveBeenCalled();
+  });
+
+  it("passes Casdoor theme changes through without returning to a loading state", async () => {
+    localStorage.setItem("cipher-theme", "light");
+    const props: React.ComponentProps<typeof LoginPage> = {
+      error: null,
+      casdoorEnabled: true,
+      casdoorDisplayName: "Cipher SSO",
+      onCasdoorAuthenticated: vi.fn(),
+      onCasdoorError: vi.fn(),
+    };
     render(
-      <LoginPage
-        mode="login"
-        onModeChange={vi.fn()}
-        onLogin={onLogin}
-        onRegister={vi.fn()}
-        isSubmitting={false}
-        error={null}
-      />
+      <ThemeProvider>
+        <LoginPage {...props} />
+      </ThemeProvider>
     );
 
-    await user.type(screen.getByLabelText("用户名"), "alice");
-    await user.type(screen.getByLabelText("密码"), "StrongPass123!");
-    await user.click(screen.getAllByRole("button", { name: "登录" })[1]!);
+    const lightFrame = screen.getByTitle("Cipher SSO 登录");
+    window.dispatchEvent(new MessageEvent("message", {
+      source: (lightFrame as HTMLIFrameElement).contentWindow,
+      data: { type: "cipher:casdoor-ready" },
+    }));
+    await waitFor(() => {
+      expect(screen.queryByText("正在载入统一登录…")).not.toBeInTheDocument();
+    });
 
-    expect(onLogin).toHaveBeenCalledWith({
-      username: "alice",
-      password: "StrongPass123!",
+    fireEvent.click(screen.getByRole("button", { name: "切换到夜间模式" }));
+    await waitFor(() => {
+      expect(screen.getByTitle("Cipher SSO 登录")).toHaveAttribute(
+        "src",
+        "/api/auth/casdoor/login?return_to=%2Fauth%2Fcasdoor%2Fembedded&theme=light"
+      );
+      expect(screen.queryByText("正在载入统一登录…")).not.toBeInTheDocument();
     });
   });
 
-  it("switches to register mode and submits invite-code registration", async () => {
-    const user = userEvent.setup();
-    const onModeChange = vi.fn();
-    const onRegister = vi.fn();
+  it("completes the parent login when the embedded callback reports success", async () => {
+    const onCasdoorAuthenticated = vi.fn();
+    renderLogin({ onCasdoorAuthenticated });
+    const frame = screen.getByTitle("Cipher SSO 登录") as HTMLIFrameElement;
 
-    const { rerender } = render(
-      <LoginPage
-        mode="login"
-        onModeChange={onModeChange}
-        onLogin={vi.fn()}
-        onRegister={onRegister}
-        isSubmitting={false}
-        error={null}
-      />
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        source: frame.contentWindow,
+        data: { type: "cipher:casdoor-auth", status: "success", message: null },
+      })
     );
 
-    await user.click(screen.getByRole("button", { name: "注册" }));
-    expect(onModeChange).toHaveBeenCalledWith("register");
-
-    rerender(
-      <LoginPage
-        mode="register"
-        onModeChange={onModeChange}
-        onLogin={vi.fn()}
-        onRegister={onRegister}
-        isSubmitting={false}
-        error={null}
-      />
-    );
-
-    await user.type(screen.getByLabelText("用户名"), "new-user");
-    await user.type(screen.getByLabelText("密码"), "StrongPass123!");
-    await user.type(screen.getByLabelText("确认密码"), "StrongPass123!");
-    await user.type(screen.getByLabelText("邀请码"), "SMBU@2014520uu-");
-    await user.click(screen.getByRole("button", { name: "创建账号" }));
-
-    expect(onRegister).toHaveBeenCalledWith({
-      username: "new-user",
-      password: "StrongPass123!",
-      confirmPassword: "StrongPass123!",
-      inviteCode: "SMBU@2014520uu-",
-    });
+    await waitFor(() => expect(onCasdoorAuthenticated).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("身份验证成功")).toBeInTheDocument();
   });
 
-  it("disables register submit when confirm password is blank", async () => {
-    const user = userEvent.setup();
+  it("shows an embedded OAuth error and passes it to the app", async () => {
+    const onCasdoorError = vi.fn();
+    renderLogin({ onCasdoorError });
+    const frame = screen.getByTitle("Cipher SSO 登录") as HTMLIFrameElement;
 
-    render(
-      <LoginPage
-        mode="register"
-        onModeChange={vi.fn()}
-        onLogin={vi.fn()}
-        onRegister={vi.fn()}
-        isSubmitting={false}
-        error={null}
-      />
+    fireEvent(
+      window,
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        source: frame.contentWindow,
+        data: {
+          type: "cipher:casdoor-auth",
+          status: "error",
+          message: "授权已取消",
+        },
+      })
     );
 
-    const button = screen.getByRole("button", { name: "创建账号" });
-    expect(button).toBeDisabled();
-
-    await user.type(screen.getByLabelText("用户名"), "new-user");
-    await user.type(screen.getByLabelText("密码"), "StrongPass123!");
-    await user.type(screen.getByLabelText("邀请码"), "SMBU@2014520uu-");
-
-    expect(button).toBeDisabled();
+    expect(await screen.findByRole("alert")).toHaveTextContent("授权已取消");
+    expect(onCasdoorError).toHaveBeenCalledWith("授权已取消");
   });
 
-  it("shows the submitting state for the active mode", () => {
-    render(
-      <LoginPage
-        mode="register"
-        onModeChange={vi.fn()}
-        onLogin={vi.fn()}
-        onRegister={vi.fn()}
-        isSubmitting={true}
-        error={null}
-      />
+  it("ignores authentication messages from another origin", async () => {
+    const onCasdoorAuthenticated = vi.fn();
+    renderLogin({ onCasdoorAuthenticated });
+    const frame = screen.getByTitle("Cipher SSO 登录") as HTMLIFrameElement;
+
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: "https://attacker.example",
+        source: frame.contentWindow,
+        data: { type: "cipher:casdoor-auth", status: "success" },
+      })
     );
 
-    expect(screen.getByLabelText("用户名")).toBeDisabled();
-    expect(screen.getByLabelText("密码")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "创建中..." })).toBeDisabled();
+    await Promise.resolve();
+    expect(onCasdoorAuthenticated).not.toHaveBeenCalled();
   });
 });

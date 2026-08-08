@@ -7,10 +7,12 @@ import * as api from "./lib/api";
 
 vi.mock("./lib/api", () => ({
   checkSession: vi.fn(),
+  getCasdoorAuthConfig: vi.fn(),
   clearAdminFileCache: vi.fn(),
   controlAdminService: vi.fn(),
+  getAdminObservability: vi.fn(),
   getAdminOverview: vi.fn(),
-  login: vi.fn(),
+  getAdminQuality: vi.fn(),
   logout: vi.fn(),
 }));
 
@@ -23,6 +25,12 @@ function LocationProbe() {
 describe("AdminApp", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.getCasdoorAuthConfig).mockResolvedValue({
+      enabled: true,
+      provider: "casdoor",
+      displayName: "Casdoor",
+      managementUrl: "http://127.0.0.1:7001",
+    });
   });
 
   it("does not reload admin overview data when switching between admin sections", async () => {
@@ -43,9 +51,9 @@ describe("AdminApp", () => {
       },
       models: {
         providers: [
-          { provider: "DeepSeek", healthy: 2, total: 2 },
-          { provider: "OpenAI", healthy: 4, total: 4 },
-          { provider: "Claude", healthy: 6, total: 6 },
+          { provider: "Cipher 轻量", healthy: 2, total: 2 },
+          { provider: "Cipher 均衡", healthy: 4, total: 4 },
+          { provider: "Cipher 深研", healthy: 6, total: 6 },
         ],
       },
       files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 3 },
@@ -57,7 +65,7 @@ describe("AdminApp", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole("heading", { name: "后端管理" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "系统管理" })).toBeInTheDocument();
     await waitFor(() => {
       expect(api.getAdminOverview).toHaveBeenCalledTimes(1);
     });
@@ -90,8 +98,8 @@ describe("AdminApp", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Admin access required");
-    expect(screen.queryByRole("heading", { name: "后端管理" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("没有 Cipher 管理权限");
+    expect(screen.queryByRole("heading", { name: "系统管理" })).not.toBeInTheDocument();
   });
 
   it("rejects inconsistent unauthenticated admin sessions even with a user payload", async () => {
@@ -107,8 +115,9 @@ describe("AdminApp", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Admin access required");
-    expect(screen.queryByRole("heading", { name: "后端管理" })).not.toBeInTheDocument();
+    expect(await screen.findByTitle("Casdoor 登录")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "系统管理" })).not.toBeInTheDocument();
   });
 
   it("keeps admin section links and section detection relative to a non-root mount path", async () => {
@@ -128,7 +137,7 @@ describe("AdminApp", () => {
         publicUrl: "https://[private-host]/chat",
       },
       models: {
-        providers: [{ provider: "DeepSeek", healthy: 2, total: 2 }],
+        providers: [{ provider: "Cipher 轻量", healthy: 2, total: 2 }],
       },
       files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 3 },
     });
@@ -140,8 +149,8 @@ describe("AdminApp", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole("heading", { name: "后端管理" })).toBeInTheDocument();
-    expect(await screen.findByText("DeepSeek")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "系统管理" })).toBeInTheDocument();
+    expect(await screen.findByText("Cipher 轻量")).toBeInTheDocument();
     expect(screen.queryByText("http://127.0.0.1:8000/chat")).not.toBeInTheDocument();
     expect(screen.getByTestId("admin-location")).toHaveTextContent("/admin.html/models");
 
@@ -153,14 +162,12 @@ describe("AdminApp", () => {
 
   it("keeps admin login and logout navigation on the non-root mount path", async () => {
     const user = userEvent.setup();
-    vi.mocked(api.checkSession).mockResolvedValueOnce({
-      authenticated: false,
-      user: null,
-    });
-    vi.mocked(api.login).mockResolvedValue({
-      authenticated: true,
-      user: { id: 5, username: "admin", isAdmin: true },
-    });
+    vi.mocked(api.checkSession)
+      .mockResolvedValueOnce({ authenticated: false, user: null })
+      .mockResolvedValueOnce({
+        authenticated: true,
+        user: { id: 5, username: "admin", isAdmin: true },
+      });
     vi.mocked(api.getAdminOverview).mockResolvedValue({
       services: {
         backend: { running: true, label: "running", detail: "Backend service is running." },
@@ -172,7 +179,7 @@ describe("AdminApp", () => {
         publicUrl: "https://[private-host]/chat",
       },
       models: {
-        providers: [{ provider: "DeepSeek", healthy: 2, total: 2 }],
+        providers: [{ provider: "Cipher 轻量", healthy: 2, total: 2 }],
       },
       files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 3 },
     });
@@ -186,29 +193,31 @@ describe("AdminApp", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
-    await user.type(document.getElementById("admin-username") as HTMLElement, "admin");
-    await user.type(document.getElementById("admin-password") as HTMLElement, "StrongPass123!");
-    await user.click(document.querySelector('button[type="submit"]') as HTMLElement);
+    const frame = (await screen.findByTitle("Casdoor 登录")) as HTMLIFrameElement;
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        source: frame.contentWindow,
+        data: { type: "cipher:casdoor-auth", status: "success" },
+      })
+    );
 
-    expect(await screen.findByRole("heading", { name: "后端管理" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "系统管理" })).toBeInTheDocument();
     expect(screen.getByTestId("admin-location")).toHaveTextContent("/admin.html");
 
-    await user.click(screen.getAllByRole("button")[1]!);
+    await user.click(screen.getByRole("button", { name: "退出登录" }));
 
     expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
     expect(screen.getByTestId("admin-location")).toHaveTextContent("/admin.html");
   });
 
   it("preserves the requested admin subsection after a successful login", async () => {
-    const user = userEvent.setup();
-    vi.mocked(api.checkSession).mockResolvedValueOnce({
-      authenticated: false,
-      user: null,
-    });
-    vi.mocked(api.login).mockResolvedValue({
-      authenticated: true,
-      user: { id: 6, username: "admin", isAdmin: true },
-    });
+    vi.mocked(api.checkSession)
+      .mockResolvedValueOnce({ authenticated: false, user: null })
+      .mockResolvedValueOnce({
+        authenticated: true,
+        user: { id: 6, username: "admin", isAdmin: true },
+      });
     vi.mocked(api.getAdminOverview).mockResolvedValue({
       services: {
         backend: { running: true, label: "running", detail: "Backend service is running." },
@@ -220,7 +229,7 @@ describe("AdminApp", () => {
         publicUrl: "https://[private-host]/chat",
       },
       models: {
-        providers: [{ provider: "DeepSeek", healthy: 2, total: 2 }],
+        providers: [{ provider: "Cipher 轻量", healthy: 2, total: 2 }],
       },
       files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 3 },
     });
@@ -233,11 +242,16 @@ describe("AdminApp", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
-    await user.type(document.getElementById("admin-username") as HTMLElement, "admin");
-    await user.type(document.getElementById("admin-password") as HTMLElement, "StrongPass123!");
-    await user.click(document.querySelector('button[type="submit"]') as HTMLElement);
+    const frame = (await screen.findByTitle("Casdoor 登录")) as HTMLIFrameElement;
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        source: frame.contentWindow,
+        data: { type: "cipher:casdoor-auth", status: "success" },
+      })
+    );
 
-    expect(await screen.findByText("DeepSeek")).toBeInTheDocument();
+    expect(await screen.findByText("Cipher 轻量")).toBeInTheDocument();
     expect(screen.queryByText("http://127.0.0.1:8000/chat")).not.toBeInTheDocument();
     expect(screen.getByTestId("admin-location")).toHaveTextContent("/admin.html/models");
   });
@@ -253,6 +267,6 @@ describe("AdminApp", () => {
 
     expect(await screen.findByRole("heading", { name: "进入管理后台" })).toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("session backend unavailable");
-    expect(screen.queryByRole("heading", { name: "后端管理" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "系统管理" })).not.toBeInTheDocument();
   });
 });

@@ -11,9 +11,14 @@ vi.mock("../lib/api", () => ({
   controlAdminService: vi.fn(),
   createAdminInvite: vi.fn(),
   deleteAdminInvite: vi.fn(),
+  getCapeTaskStatus: vi.fn(),
+  getCapeTaskSummary: vi.fn(),
   getAdminInvites: vi.fn(),
+  getAdminObservability: vi.fn(),
   getAdminOverview: vi.fn(),
   getAdminPrompt: vi.fn(),
+  getAdminQuality: vi.fn(),
+  submitCapeSample: vi.fn(),
   resetAdminPrompt: vi.fn(),
   saveAdminPrompt: vi.fn(),
   toggleAdminInvite: vi.fn()
@@ -38,9 +43,9 @@ describe("AdminPage", () => {
       },
       models: {
         providers: [
-          { provider: "DeepSeek", healthy: 2, total: 2 },
-          { provider: "OpenAI", healthy: 4, total: 4 },
-          { provider: "Claude", healthy: 6, total: 6 }
+          { provider: "Cipher 轻量", healthy: 2, total: 2 },
+          { provider: "Cipher 均衡", healthy: 4, total: 4 },
+          { provider: "Cipher 深研", healthy: 6, total: 6 }
         ]
       },
       files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 3 }
@@ -56,7 +61,7 @@ describe("AdminPage", () => {
     expect(screen.getByText("Cloudflare tunnel is stopped.")).toBeInTheDocument();
     expect(screen.getByText("http://127.0.0.1:8000/chat")).toBeInTheDocument();
     expect(screen.getByText("https://[private-host]/chat")).toBeInTheDocument();
-    expect(screen.getByText("DeepSeek")).toBeInTheDocument();
+    expect(screen.getByText("Cipher 轻量")).toBeInTheDocument();
     expect(screen.getByText(/10/)).toBeInTheDocument();
   });
 
@@ -152,7 +157,7 @@ describe("AdminPage", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("3");
   });
 
-  it("shows the invites section inside admin navigation", async () => {
+  it("embeds the Casdoor console in the identity-management section", async () => {
     vi.mocked(api.getAdminOverview).mockResolvedValue({
       services: {
         backend: { running: true, label: "running", detail: "Backend service is running." },
@@ -166,28 +171,64 @@ describe("AdminPage", () => {
       models: { providers: [] },
       files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 0 }
     });
-    vi.mocked(api.getAdminInvites).mockResolvedValue({ items: [] });
 
     render(
-      <MemoryRouter initialEntries={["/invites"]}>
-        <AdminPage onLogout={() => undefined} />
+      <MemoryRouter initialEntries={["/identity"]}>
+        <AdminPage
+          onLogout={() => undefined}
+          casdoorManagementUrl="http://127.0.0.1:7001"
+        />
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole("link", { name: "邀请码" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "邀请码管理" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "身份管理" })).toBeInTheDocument();
+    expect(screen.getByTitle("Casdoor 身份管理")).toHaveAttribute(
+      "src",
+      "http://127.0.0.1:7001"
+    );
+    expect(screen.queryByText("统一身份管理")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "新窗口打开" })).not.toBeInTheDocument();
+    expect(document.querySelector(".admin-console__content--identity")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "邀请码" })).not.toBeInTheDocument();
   });
-  it("keeps invites usable when overview loading fails", async () => {
-    vi.mocked(api.getAdminOverview).mockRejectedValue(new Error("overview unavailable"));
-    vi.mocked(api.getAdminInvites).mockResolvedValue({ items: [] });
+
+  it("shows the CAPE section inside admin navigation", async () => {
+    vi.mocked(api.getAdminOverview).mockResolvedValue({
+      services: {
+        backend: { running: true, label: "running", detail: "Backend service is running." },
+        tunnel: { running: true, label: "running", detail: "Cloudflare tunnel is running." },
+        autostartEnabled: true
+      },
+      access: {
+        localUrl: "http://127.0.0.1:8000/chat",
+        publicUrl: "https://[private-host]/chat"
+      },
+      models: { providers: [] },
+      files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 0 }
+    });
 
     render(
-      <MemoryRouter initialEntries={["/invites"]}>
+      <MemoryRouter initialEntries={["/cape"]}>
         <AdminPage onLogout={() => undefined} />
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole("heading", { name: "邀请码管理" })).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent("overview unavailable");
+    expect(await screen.findByRole("link", { name: "CAPE" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "本地沙箱提交" })).toBeInTheDocument();
+  });
+  it("keeps identity management usable when overview loading fails", async () => {
+    vi.mocked(api.getAdminOverview).mockRejectedValue(new Error("overview unavailable"));
+
+    render(
+      <MemoryRouter initialEntries={["/identity"]}>
+        <AdminPage
+          onLogout={() => undefined}
+          casdoorManagementUrl="http://127.0.0.1:7001"
+        />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByTitle("Casdoor 身份管理")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

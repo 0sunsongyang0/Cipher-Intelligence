@@ -11,7 +11,8 @@ from app.database import get_db
 
 router = APIRouter(tags=["frontend"], include_in_schema=False)
 
-FRONTEND_DIST_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+FRONTEND_ROOT_DIR = Path(__file__).resolve().parents[3] / "frontend"
+FRONTEND_DIST_DIR = FRONTEND_ROOT_DIR / "dist"
 FRONTEND_INDEX_PATH = FRONTEND_DIST_DIR / "index.html"
 FRONTEND_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
 SPA_SHELL_HEADERS = {

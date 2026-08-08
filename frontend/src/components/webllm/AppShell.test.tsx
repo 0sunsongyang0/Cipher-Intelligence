@@ -84,6 +84,8 @@ function setMobileViewport(enabled: boolean) {
 describe("AppShell", () => {
   const onLogout = vi.fn().mockResolvedValue(undefined);
   const sendMessage = vi.fn().mockResolvedValue(undefined);
+  const submitCapeCase = vi.fn();
+  const refreshCapeCase = vi.fn();
   const uploadZip = vi.fn().mockResolvedValue(undefined);
   const setActiveConversationId = vi.fn();
   const deleteConversation = vi.fn();
@@ -92,6 +94,10 @@ describe("AppShell", () => {
   const removeFile = vi.fn();
   const setModelId = vi.fn();
   const setWebSearchEnabled = vi.fn();
+  const stopGeneration = vi.fn();
+  const renameConversation = vi.fn().mockResolvedValue(undefined);
+  const setConversationPinned = vi.fn().mockResolvedValue(undefined);
+  const setConversationArchived = vi.fn().mockResolvedValue(undefined);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -105,9 +111,15 @@ describe("AppShell", () => {
       deleteConversation,
       error: null,
       isGenerating: false,
+      stopGeneration,
+      renameConversation,
+      setConversationPinned,
+      setConversationArchived,
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -122,17 +134,189 @@ describe("AppShell", () => {
   });
 
   it("renders the shell layout with chat content", () => {
-    render(<AppShell onLogout={onLogout} />);
+    render(
+      <AppShell
+        viewer={{
+          id: 1,
+          username: "alice",
+          displayName: "Alice Chen",
+          avatarUrl: "/api/account/avatars/user-1-0123456789abcdef.webp",
+          isAdmin: false
+        }}
+        onLogout={onLogout}
+      />
+    );
 
     expect(screen.getByTestId("aurora-background")).toBeInTheDocument();
     expect(screen.getByTestId("chat-shell")).toBeInTheDocument();
     expect(screen.getByTestId("chat-input-dock")).toBeInTheDocument();
-    expect(screen.getByText("deepseek-v4-flash")).toBeInTheDocument();
-    expect(screen.getByText("Cipher AI")).toBeInTheDocument();
-    expect(screen.getByText("Designer.Dev")).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "Conversations" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "切换模型" })).toHaveAttribute(
+      "title",
+      "切换模型 · 当前为 Cipher Swift"
+    );
+    expect(screen.getByRole("img", { name: "Cipher Intelligence" })).toHaveAttribute(
+      "src",
+      "/assets/cipher-wordmark.svg"
+    );
+    expect(screen.getByRole("button", { name: "开启新对话" })).toHaveTextContent("新建对话");
+    expect(screen.getByRole("searchbox", { name: "全文搜索会话" })).toHaveAttribute(
+      "placeholder",
+      "搜索标题、消息与 IOC"
+    );
+    expect(screen.getByText("最近对话", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText("偏好设置")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Alice Chen 打开账号设置" })).toHaveTextContent("Alice Chen");
+    expect(screen.getByRole("button", { name: "Alice Chen 打开账号设置" }).querySelector("img")).toHaveAttribute(
+      "src",
+      "/api/account/avatars/user-1-0123456789abcdef.webp"
+    );
+    expect(screen.getByTestId("message-row-message-1").querySelector(".bomb-shell__message-avatar-photo")).toHaveAttribute(
+      "src",
+      "/api/account/avatars/user-1-0123456789abcdef.webp"
+    );
+    expect(screen.getByRole("complementary", { name: "会话导航" })).toBeInTheDocument();
     expect(screen.getByRole("log")).toBeInTheDocument();
-    expect(screen.getByText("Campus rollout plan")).toBeInTheDocument();
+    expect(screen.getAllByText("Campus rollout plan")).toHaveLength(2);
+    expect(screen.getByTestId("conversation-context")).toHaveTextContent("Campus rollout plan");
+    expect(screen.getByTestId("conversation-context")).toHaveTextContent("推理服务在线");
+    expect(screen.getByTestId("chat-input-dock")).toHaveAttribute("data-layout", "docked");
+  });
+
+  it("opens the standalone account page from the profile control", async () => {
+    const user = userEvent.setup();
+    const onOpenAccount = vi.fn();
+
+    render(
+      <AppShell
+        viewer={{ id: 1, username: "alice", displayName: "Alice", avatarUrl: null, isAdmin: false }}
+        onOpenAccount={onOpenAccount}
+        onLogout={onLogout}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Alice 打开账号设置" }));
+
+    expect(onOpenAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it("full-text searches conversation messages from the permanent sidebar", async () => {
+    const user = userEvent.setup();
+    const incidentConversation: LocalConversation = {
+      ...buildConversation(),
+      id: "conversation-2",
+      title: "SOC notes",
+      messages: [
+        {
+          id: "message-incident",
+          role: "assistant",
+          content: "Incident response evidence includes beacon.example",
+          createdAt: "2026-07-03T10:00:01.000Z"
+        }
+      ]
+    };
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      ...vi.mocked(useServerChatModule.useServerChat)(),
+      conversations: [buildConversation(), incidentConversation]
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+
+    const sidebar = screen.getByRole("complementary", { name: "会话导航" });
+    const search = within(sidebar).getByRole("searchbox", { name: "全文搜索会话" });
+
+    await user.type(search, "incident");
+
+    expect(within(sidebar).queryByText("Campus rollout plan")).not.toBeInTheDocument();
+    expect(within(sidebar).getByText("SOC notes")).toBeInTheDocument();
+
+    await user.click(within(sidebar).getByRole("button", { name: "清空会话搜索" }));
+
+    expect(within(sidebar).getByText("Campus rollout plan")).toBeInTheDocument();
+    expect(within(sidebar).getByText("SOC notes")).toBeInTheDocument();
+  });
+
+  it("stops an in-flight generation from the composer", async () => {
+    const user = userEvent.setup();
+    vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
+      ...vi.mocked(useServerChatModule.useServerChat)(),
+      isGenerating: true,
+      stopGeneration
+    });
+
+    render(<AppShell onLogout={onLogout} />);
+    const stopButton = screen.getByRole("button", { name: "停止生成" });
+    expect(stopButton).toHaveClass("bomb-shell__send-button--active");
+    await user.click(stopButton);
+
+    expect(stopGeneration).toHaveBeenCalledTimes(1);
+  });
+
+  it("renames and pins a conversation from its management menu", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    await user.click(screen.getByRole("button", { name: "管理会话 Campus rollout plan" }));
+    await user.click(screen.getByRole("button", { name: "重命名" }));
+    const titleInput = screen.getByRole("textbox", { name: "会话名称" });
+    await user.clear(titleInput);
+    await user.type(titleInput, "Incident 42");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(renameConversation).toHaveBeenCalledWith("conversation-1", "Incident 42");
+
+    await user.click(screen.getByRole("button", { name: "管理会话 Campus rollout plan" }));
+    await user.click(screen.getByRole("button", { name: "置顶会话" }));
+    expect(setConversationPinned).toHaveBeenCalledWith("conversation-1", true);
+  });
+
+  it("restores the desktop sidebar after it has been collapsed", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    const sidebar = screen.getByRole("complementary", { name: "会话导航" });
+    expect(sidebar).toHaveClass("bomb-shell__sidebar--open");
+
+    await user.click(screen.getByRole("button", { name: "收起会话栏" }));
+
+    expect(sidebar).not.toHaveClass("bomb-shell__sidebar--open");
+    const expandButton = screen.getByRole("button", { name: "展开会话栏" });
+    expect(expandButton).toHaveTextContent("展开");
+
+    await user.click(expandButton);
+
+    expect(sidebar).toHaveClass("bomb-shell__sidebar--open");
+  });
+
+  it("exposes composer focus state for material feedback", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    const dock = screen.getByTestId("chat-input-dock");
+    expect(dock).toHaveAttribute("data-focused", "false");
+
+    await user.click(screen.getByRole("textbox"));
+    expect(dock).toHaveAttribute("data-focused", "true");
+
+    await user.tab();
+    expect(dock).toHaveAttribute("data-focused", "false");
+  });
+
+  it("centers the send button until the composer becomes multiline", async () => {
+    render(<AppShell onLogout={onLogout} />);
+
+    const dock = screen.getByRole("form", { name: "消息输入框" });
+    const textarea = screen.getByRole("textbox");
+    expect(dock).toHaveAttribute("data-multiline", "false");
+
+    Object.defineProperty(textarea, "scrollHeight", {
+      configurable: true,
+      value: 88
+    });
+    fireEvent.change(textarea, { target: { value: "第一行\n第二行" } });
+
+    await waitFor(() => {
+      expect(dock).toHaveAttribute("data-multiline", "true");
+    });
   });
 
   it("submits a prompt through the composer", async () => {
@@ -162,6 +346,18 @@ describe("AppShell", () => {
     expect(screen.getByRole("status")).toHaveTextContent("已启用联网搜索");
   });
 
+  it("opens the CAPE panel from the dock tools", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    await user.click(screen.getByRole("button", { name: "打开 CAPE 面板" }));
+
+    expect(screen.getByRole("heading", { name: "本地 CAPE 沙箱" })).toBeInTheDocument();
+    expect(screen.getByText("样本将提交到本机 CAPE 环境进行分析，任务进度与结果摘要会显示在这里。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择要分析的样本" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交到 CAPE" })).toBeDisabled();
+  });
+
   it("renders the web search button in its active visual state", () => {
     vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
       activeConversation: buildConversation(),
@@ -175,6 +371,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -207,6 +405,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -244,6 +444,8 @@ describe("AppShell", () => {
         removeFile,
         runtimeStatus: "ready" as const,
         sendMessage,
+        submitCapeCase,
+        refreshCapeCase,
         setWebSearchEnabled,
         uploadZip,
         setActiveConversationId,
@@ -283,9 +485,9 @@ describe("AppShell", () => {
 
     await user.click(getModelMenuButton());
 
-    const deepSeekProvider = screen.getByRole("menuitem", { name: "DeepSeek" });
-    const openAiProvider = screen.getByRole("menuitem", { name: "OpenAI" });
-    const claudeProvider = screen.getByRole("menuitem", { name: "Claude" });
+    const deepSeekProvider = screen.getByRole("menuitem", { name: "Cipher 轻量" });
+    const openAiProvider = screen.getByRole("menuitem", { name: "Cipher 均衡" });
+    const claudeProvider = screen.getByRole("menuitem", { name: "Cipher 深研" });
 
     expect(deepSeekProvider).toBeInTheDocument();
     expect(openAiProvider).toBeInTheDocument();
@@ -296,16 +498,87 @@ describe("AppShell", () => {
     expect(openAiProvider).toHaveAttribute("aria-haspopup", "menu");
     expect(openAiProvider).toHaveAttribute("aria-expanded", "false");
     expect(openAiProvider).toHaveAttribute("aria-controls", deepSeekProvider.getAttribute("aria-controls"));
-    expect(screen.queryByRole("menuitemradio", { name: "ChatGPT 5.5" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitemradio", { name: "Cipher Prime" })).not.toBeInTheDocument();
   });
 
-  it("opens the OpenAI submenu and switches to ChatGPT 5.5", async () => {
+  it("uses a model switcher above the composer and anchors the menu beneath its trigger", async () => {
+    const user = userEvent.setup();
+    render(<AppShell onLogout={onLogout} />);
+
+    const trigger = getModelMenuButton();
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      bottom: 122,
+      height: 42,
+      left: 238,
+      right: 280,
+      top: 80,
+      width: 42,
+      x: 238,
+      y: 80,
+      toJSON: () => ({})
+    });
+
+    expect(trigger.querySelector(".bomb-shell__model-pill-switch")).not.toBeNull();
+    expect(trigger).toHaveAttribute("title", "切换模型 · 当前为 Cipher Swift");
+    expect(within(screen.getByTestId("chat-input-dock")).getByRole("button", { name: "切换模型" })).toBe(
+      trigger
+    );
+
+    await user.click(trigger);
+
+    const menu = screen.getByRole("menu", { name: "模型列表" });
+    await waitFor(() => {
+      expect(menu).toHaveAttribute("data-placement", "below");
+      expect(menu).toHaveStyle({ left: "238px", top: "132px" });
+    });
+    expect(menu.parentElement).toBe(screen.getByTestId("chat-shell"));
+  });
+
+  it("keeps the phone model menu inside the viewport", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    vi.stubGlobal("innerHeight", 844);
+
+    try {
+      const user = userEvent.setup();
+      render(<AppShell onLogout={onLogout} />);
+
+      const trigger = getModelMenuButton();
+      vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+        bottom: 388,
+        height: 38,
+        left: 50,
+        right: 230,
+        top: 350,
+        width: 180,
+        x: 50,
+        y: 350,
+        toJSON: () => ({})
+      });
+
+      await user.click(trigger);
+
+      const menu = screen.getByRole("menu", { name: "模型列表" });
+      await waitFor(() => {
+        expect(menu).toHaveAttribute("data-placement", "below");
+        expect(menu).toHaveStyle({ left: "18px", top: "398px" });
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("opens the Cipher 均衡 submenu and switches to Cipher Prime", async () => {
     const user = userEvent.setup();
     render(<AppShell onLogout={onLogout} />);
 
     await user.click(getModelMenuButton());
-    await user.click(screen.getByRole("menuitem", { name: "OpenAI" }));
-    await user.click(screen.getByRole("menuitemradio", { name: "ChatGPT 5.5" }));
+    const openAiProvider = screen.getByRole("menuitem", { name: "Cipher 均衡" });
+    await user.hover(openAiProvider);
+    await user.click(openAiProvider);
+    await waitFor(() => {
+      expect(openAiProvider).toHaveAttribute("aria-expanded", "true");
+    });
+    await user.click(await screen.findByRole("menuitemradio", { name: "Cipher Prime" }));
 
     expect(setModelId).toHaveBeenCalledWith("chatgpt-5.5-official");
     expect(getModelMenuButton()).toHaveAttribute("aria-expanded", "false");
@@ -325,6 +598,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -340,7 +615,7 @@ describe("AppShell", () => {
     render(<AppShell onLogout={onLogout} />);
     await user.click(getModelMenuButton());
 
-    expect(screen.getByRole("menuitem", { name: "Claude" }).className).toContain(
+    expect(screen.getByRole("menuitem", { name: "Cipher 深研" }).className).toContain(
       "bomb-shell__model-provider-item--selected"
     );
   });
@@ -351,25 +626,25 @@ describe("AppShell", () => {
 
     await user.click(getModelMenuButton());
 
-    const deepSeekProvider = screen.getByRole("menuitem", { name: "DeepSeek" });
+    const deepSeekProvider = screen.getByRole("menuitem", { name: "Cipher 轻量" });
     await waitFor(() => {
       expect(deepSeekProvider).toHaveFocus();
     });
 
     fireEvent.keyDown(deepSeekProvider, { key: "ArrowDown" });
-    const openAiProvider = screen.getByRole("menuitem", { name: "OpenAI" });
+    const openAiProvider = screen.getByRole("menuitem", { name: "Cipher 均衡" });
     expect(openAiProvider).toHaveFocus();
 
     fireEvent.keyDown(openAiProvider, { key: "Enter" });
     fireEvent.keyDown(openAiProvider, { key: "ArrowRight" });
 
-    const firstOpenAiModel = screen.getByRole("menuitemradio", { name: "ChatGPT 5.5" });
+    const firstOpenAiModel = screen.getByRole("menuitemradio", { name: "Cipher Prime" });
     expect(firstOpenAiModel).toHaveFocus();
 
     fireEvent.keyDown(firstOpenAiModel, { key: "ArrowDown" });
-    expect(screen.getByRole("menuitemradio", { name: "ChatGPT 5.4" })).toHaveFocus();
+    expect(screen.getByRole("menuitemradio", { name: "Cipher Vector" })).toHaveFocus();
 
-    fireEvent.keyDown(screen.getByRole("menuitemradio", { name: "ChatGPT 5.4" }), { key: "ArrowUp" });
+    fireEvent.keyDown(screen.getByRole("menuitemradio", { name: "Cipher Vector" }), { key: "ArrowUp" });
     expect(firstOpenAiModel).toHaveFocus();
 
     fireEvent.keyDown(firstOpenAiModel, { key: "ArrowLeft" });
@@ -384,7 +659,7 @@ describe("AppShell", () => {
     await user.click(trigger);
 
     await waitFor(() => {
-      expect(screen.getByRole("menuitem", { name: "DeepSeek" })).toHaveFocus();
+      expect(screen.getByRole("menuitem", { name: "Cipher 轻量" })).toHaveFocus();
     });
 
     await user.keyboard("{Escape}");
@@ -426,7 +701,7 @@ describe("AppShell", () => {
     const clickSpy = vi.spyOn(HTMLInputElement.prototype, "click");
     render(<AppShell onLogout={onLogout} />);
 
-    await user.click(within(screen.getByTestId("chat-input-dock")).getAllByRole("button")[0]);
+    await user.click(within(screen.getByTestId("chat-input-dock")).getByRole("button", { name: "添加附件" }));
 
     expect(clickSpy).toHaveBeenCalledTimes(1);
 
@@ -465,6 +740,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -516,6 +793,8 @@ describe("AppShell", () => {
       removePendingZipContext,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -562,6 +841,8 @@ describe("AppShell", () => {
       removePendingZipContext: vi.fn(),
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -616,6 +897,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -639,7 +922,7 @@ describe("AppShell", () => {
     expect(screen.queryByText("当前模型不支持 ZIP 文件问答，请切换其他模型。")).toBeNull();
   });
 
-  it("does not show stale ZIP unsupported errors for DeepSeek follow-up sends", async () => {
+  it("does not show stale ZIP unsupported errors for Cipher follow-up sends", async () => {
     const user = userEvent.setup();
 
     vi.mocked(useServerChatModule.useServerChat).mockReturnValue({
@@ -666,6 +949,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -756,6 +1041,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -821,6 +1108,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -886,6 +1175,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -954,6 +1245,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -1061,14 +1354,13 @@ describe("AppShell", () => {
       types: ["Files"]
     };
 
-    fireEvent.dragEnter(screen.getByRole("complementary", { name: "Conversations" }), {
+    fireEvent.dragEnter(screen.getByRole("complementary", { name: "会话导航" }), {
       dataTransfer
     });
 
     expect(document.querySelector(".bomb-shell__drop-overlay")).toBeNull();
     expect(addFiles).not.toHaveBeenCalled();
 
-    await user.click(within(screen.getByRole("banner")).getAllByRole("button")[0]);
     await user.click(within(screen.getByRole("banner")).getAllByRole("button")[0]);
 
     const drawerSidebar = screen.getAllByRole("complementary").find((element) =>
@@ -1098,6 +1390,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready" as const,
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -1137,7 +1431,7 @@ describe("AppShell", () => {
     expect(log.scrollTop).toBe(0);
     expect(document.querySelector(".bomb-shell__landing")).not.toBeNull();
     expect(document.querySelector(".bomb-shell__dock-wrap--centered")).not.toBeNull();
-    expect(screen.getByText("需要我为你做些什么？")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "从哪条线索开始？" })).toBeInTheDocument();
     expect(document.querySelector(".bomb-shell__dock-wrap:not(.bomb-shell__dock-wrap--centered)")).toBeNull();
   });
 
@@ -1164,6 +1458,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -1207,6 +1503,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -1248,6 +1546,8 @@ describe("AppShell", () => {
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -1300,6 +1600,8 @@ H(j\\omega)=\\begin{cases}
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -1348,6 +1650,8 @@ H(j\\omega)=\\begin{cases}
       removeFile,
       runtimeStatus: "ready",
       sendMessage,
+      submitCapeCase,
+      refreshCapeCase,
       setWebSearchEnabled,
       uploadZip,
       setActiveConversationId,
@@ -1366,9 +1670,3 @@ H(j\\omega)=\\begin{cases}
     expectReadableMath(3);
   });
 });
-
-
-
-
-
-

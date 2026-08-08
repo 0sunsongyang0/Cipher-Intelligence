@@ -18,21 +18,21 @@ describe("grouped model metadata", () => {
     expect(MODEL_PROVIDER_ORDER).toEqual(["deepseek", "openai", "claude"]);
   });
 
-  it("returns only DeepSeek models for the DeepSeek provider", () => {
+  it("returns only the economy models for the first provider", () => {
     expect(getDeepSeekModelsByProvider("deepseek").map((model) => model.id)).toEqual([
       "deepseek-v4-flash",
       "deepseek-v4-pro"
     ]);
   });
 
-  it("keeps the OpenAI submenu focused on usable primary models only", () => {
+  it("keeps the middle submenu focused on usable primary models only", () => {
     expect(getDeepSeekModelsByProvider("openai").map((model) => model.id)).toEqual([
       "chatgpt-5.5-official",
       "chatgpt-5.4-az"
     ]);
   });
 
-  it("maps chatgpt-5.5-official back to the OpenAI provider", () => {
+  it("maps chatgpt-5.5-official back to its provider", () => {
     expect(getDeepSeekModelProvider("chatgpt-5.5-official")).toBe("openai");
   });
 
@@ -76,9 +76,6 @@ describe("grouped model metadata", () => {
       "claude-opus-4-7-official",
       "claude-opus-4-6-aws",
       "claude-sonnet-4-6-az",
-      "claude-opus-4-7-backup",
-      "claude-opus-4-6-backup",
-      "claude-sonnet-4-6-backup"
     ]);
   });
 
