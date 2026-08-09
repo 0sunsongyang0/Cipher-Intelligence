@@ -222,7 +222,7 @@ class Settings(BaseSettings):
     cape_task_cost_microusd: int = 0
     cape_task_cost_cny: Decimal = Decimal("1")
     billing_cny_per_usd: Decimal = Decimal("7.2")
-    openai_proxy_base_url: str = "http://[private-ip]:3887/v1"
+    openai_proxy_base_url: str = "http://203.0.113.10:3887/v1"
     openai_official_api_key: str = "unset"
     retention_cleanup_interval_seconds: int = 86400
     retention_upload_days: int = 30

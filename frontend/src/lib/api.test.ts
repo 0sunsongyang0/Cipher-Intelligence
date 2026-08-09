@@ -393,7 +393,7 @@ describe("api auth helpers", () => {
             },
             access: {
               localUrl: "http://127.0.0.1:8000/chat",
-              publicUrl: "https://[private-host]/chat"
+              publicUrl: "https://chat.example.invalid/chat"
             },
             models: { providers: [] },
             files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 0 }

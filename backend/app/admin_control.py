@@ -25,7 +25,7 @@ ADMIN_AUTOSTART_TASK = "CipherChatCloudflared"
 CHAT_STARTUP_LAUNCHER = "CipherChatWeb.cmd"
 ADMIN_STARTUP_LAUNCHER = "CipherAdminConsole.cmd"
 TUNNEL_STARTUP_LAUNCHER = "CipherChatCloudflared.cmd"
-TUNNEL_ID = "[private-tunnel-id]"
+TUNNEL_ID = "replace-with-cloudflare-tunnel-id"
 
 
 class ProcessStateInput(TypedDict):

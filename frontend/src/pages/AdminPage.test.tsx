@@ -39,7 +39,7 @@ describe("AdminPage", () => {
       },
       access: {
         localUrl: "http://127.0.0.1:8000/chat",
-        publicUrl: "https://[private-host]/chat"
+        publicUrl: "https://chat.example.invalid/chat"
       },
       models: {
         providers: [
@@ -60,7 +60,7 @@ describe("AdminPage", () => {
     expect(await screen.findByText("Backend service is running.")).toBeInTheDocument();
     expect(screen.getByText("Cloudflare tunnel is stopped.")).toBeInTheDocument();
     expect(screen.getByText("http://127.0.0.1:8000/chat")).toBeInTheDocument();
-    expect(screen.getByText("https://[private-host]/chat")).toBeInTheDocument();
+    expect(screen.getByText("https://chat.example.invalid/chat")).toBeInTheDocument();
     expect(screen.getByText("Cipher 轻量")).toBeInTheDocument();
     expect(screen.getByText(/10/)).toBeInTheDocument();
   });
@@ -76,7 +76,7 @@ describe("AdminPage", () => {
         },
         access: {
           localUrl: "http://127.0.0.1:8000/chat",
-          publicUrl: "https://[private-host]/chat"
+          publicUrl: "https://chat.example.invalid/chat"
         },
         models: { providers: [] },
         files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 0 }
@@ -89,7 +89,7 @@ describe("AdminPage", () => {
         },
         access: {
           localUrl: "http://127.0.0.1:8000/chat",
-          publicUrl: "https://[private-host]/chat"
+          publicUrl: "https://chat.example.invalid/chat"
         },
         models: { providers: [] },
         files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 0 }
@@ -124,7 +124,7 @@ describe("AdminPage", () => {
         },
         access: {
           localUrl: "http://127.0.0.1:8000/chat",
-          publicUrl: "https://[private-host]/chat"
+          publicUrl: "https://chat.example.invalid/chat"
         },
         models: { providers: [] },
         files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 3 }
@@ -137,7 +137,7 @@ describe("AdminPage", () => {
         },
         access: {
           localUrl: "http://127.0.0.1:8000/chat",
-          publicUrl: "https://[private-host]/chat"
+          publicUrl: "https://chat.example.invalid/chat"
         },
         models: { providers: [] },
         files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 0 }
@@ -166,7 +166,7 @@ describe("AdminPage", () => {
       },
       access: {
         localUrl: "http://127.0.0.1:8000/chat",
-        publicUrl: "https://[private-host]/chat"
+        publicUrl: "https://chat.example.invalid/chat"
       },
       models: { providers: [] },
       files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 0 }
@@ -201,7 +201,7 @@ describe("AdminPage", () => {
       },
       access: {
         localUrl: "http://127.0.0.1:8000/chat",
-        publicUrl: "https://[private-host]/chat"
+        publicUrl: "https://chat.example.invalid/chat"
       },
       models: { providers: [] },
       files: { uploadLimit: 10, zipEnabled: true, zipContextCount: 0 }

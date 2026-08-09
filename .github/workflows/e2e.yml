@@ -1,7 +1,7 @@
 name: Critical E2E
 
 on:
-  push:
+  workflow_dispatch:
   pull_request:
 
 concurrency:

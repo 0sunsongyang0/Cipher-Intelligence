@@ -420,7 +420,7 @@ def test_admin_overview_returns_service_model_and_file_sections(
             },
             "access": {
                 "localUrl": "http://127.0.0.1:8000/chat",
-                "publicUrl": "https://[private-host]/chat",
+                "publicUrl": "https://chat.example.invalid/chat",
             },
             "models": {"providers": [{"provider": "Cipher 轻量", "healthy": 2, "total": 2}]},
             "files": {"uploadLimit": 10, "zipEnabled": True, "zipContextCount": 3},

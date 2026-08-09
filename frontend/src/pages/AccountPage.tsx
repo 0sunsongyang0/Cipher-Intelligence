@@ -459,7 +459,7 @@ export function AccountPage({ viewer, onBack, onViewerChange }: AccountPageProps
 
   useEffect(() => {
     const handleProviderMessage = (event: MessageEvent) => {
-      if (event.origin !== "https://[private-host]" || event.data?.type !== "cipher-casdoor-link-complete") return;
+      if (event.origin !== "https://auth.example.invalid" || event.data?.type !== "cipher-casdoor-link-complete") return;
       setLinkingProvider(null);
       void handleSync().then(() => getAccountProviders().then(setAccountProviders));
       setSecurityDetailMessage("第三方账号已绑定并同步。");

@@ -354,7 +354,7 @@ def get_admin_overview_payload() -> dict[str, object]:
         "services": manager.snapshot_payload(),
         "access": {
             "localUrl": "http://127.0.0.1:8000/chat",
-            "publicUrl": "https://[private-host]/chat",
+            "publicUrl": "https://chat.example.invalid/chat",
         },
         "models": get_admin_model_payload(),
         "files": get_admin_files_payload(),
