@@ -43,54 +43,13 @@ describe("LoginPage", () => {
   it("shows a configuration error instead of falling back to local login", () => {
     renderLogin({ casdoorEnabled: false });
 
-    expect(screen.getByText("统一身份认证当前不可用，可使用本地访问密码登录。")).toBeInTheDocument();
-    expect(screen.getByLabelText("用户名")).toBeInTheDocument();
-    expect(screen.getByLabelText("本地访问密码")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "登录" })).toBeInTheDocument();
-    expect(screen.queryByTitle(/登录/)).not.toBeInTheDocument();
-  });
-
-  it("submits the local account login when Casdoor is unavailable", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          authenticated: true,
-          user: {
-            id: 1,
-            username: "codex",
-            displayName: "codex",
-            avatarUrl: null,
-            isAdmin: false,
-          },
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" }
-        }
-      )
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Casdoor 统一身份认证未配置，请检查服务端 CASDOOR_ENABLED 及应用凭据。"
     );
-    const onCasdoorAuthenticated = vi.fn();
-    const onCasdoorError = vi.fn();
-    renderLogin({
-      casdoorEnabled: false,
-      onCasdoorAuthenticated,
-      onCasdoorError
-    });
-
-    fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "codex" } });
-    fireEvent.change(screen.getByLabelText("本地访问密码"), { target: { value: "local-password" } });
-    fireEvent.click(screen.getByRole("button", { name: "登录" }));
-
-    await waitFor(() => expect(onCasdoorAuthenticated).toHaveBeenCalledTimes(1));
-    expect(fetchSpy).toHaveBeenCalledWith("/api/auth/login", {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ username: "codex", password: "local-password" })
-    });
-    expect(onCasdoorError).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("用户名")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("本地访问密码")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "登录" })).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/登录/)).not.toBeInTheDocument();
   });
 
   it("passes Casdoor theme changes through without returning to a loading state", async () => {
